@@ -1,17 +1,23 @@
 #include <Wire.h>
 #include "Adafruit_MPR121.h"
 
-#define TCA_ADDR 0x70
-#define NUM_SENSORS 8  
+#define TCA9548A_ADDR 0x70
+#define NUM_MUX_CHANNELS 8
+#define MPR121_ADDR 0x5A
 
-Adafruit_MPR121 cap[NUM_SENSORS];
-uint16_t lasttouched[NUM_SENSORS] = {0};
-uint16_t currtouched[NUM_SENSORS] = {0};
+#ifndef _BV
+#define _BV(bit) (1 << (bit))
+#endif
 
-// Switch TCA9548A to the specified channel (0-7)
+Adafruit_MPR121 cap[NUM_MUX_CHANNELS];
+bool mprReady[NUM_MUX_CHANNELS];
+
+uint16_t lasttouched[NUM_MUX_CHANNELS];
+uint16_t currtouched[NUM_MUX_CHANNELS];
+
 void tcaSelect(uint8_t channel) {
   if (channel > 7) return;
-  Wire.beginTransmission(TCA_ADDR);
+  Wire.beginTransmission(TCA9548A_ADDR);
   Wire.write(1 << channel);
   Wire.endTransmission();
 }
@@ -19,44 +25,51 @@ void tcaSelect(uint8_t channel) {
 void setup() {
   Serial.begin(9600);
   while (!Serial) { delay(10); }
+
   Wire.begin();
 
-  Serial.println("Initializing MPR121 sensors via TCA9548A...");
+  Serial.println("Initializing 8x MPR121 via TCA9548A...");
 
-  for (uint8_t i = 0; i < NUM_SENSORS; i++) {
-    tcaSelect(i);
-    if (!cap[i].begin(0x5A)) {
-      Serial.print("MPR121 #"); Serial.print(i);
-      Serial.println(" not found, check wiring?");
+  for (uint8_t ch = 0; ch < NUM_MUX_CHANNELS; ch++) {
+    tcaSelect(ch);
+    if (cap[ch].begin(MPR121_ADDR)) {
+      cap[ch].setAutoconfig(true);
+      cap[ch].setThresholds(40, 20);
+
+      Serial.print("Channel "); Serial.print(ch); Serial.println(": MPR121 found.");
+      mprReady[ch] = true;
     } else {
-      Serial.print("MPR121 #"); Serial.print(i);
-      Serial.println(" found!");
+      Serial.print("Channel "); Serial.print(ch); Serial.println(": MPR121 NOT found.");
+      mprReady[ch] = false;
     }
+    lasttouched[ch] = 0;
   }
 
-  Serial.println("Initialization complete.");
+  Serial.println("Setup complete.");
 }
 
 void loop() {
-  for (uint8_t s = 0; s < NUM_SENSORS; s++) {
-    tcaSelect(s);
-    currtouched[s] = cap[s].touched();
+  for (uint8_t ch = 0; ch < NUM_MUX_CHANNELS; ch++) {
+    if (!mprReady[ch]) continue;
+
+    tcaSelect(ch);
+    currtouched[ch] = cap[ch].touched();
 
     for (uint8_t i = 0; i < 12; i++) {
-      // Pad just touched
-      if ((currtouched[s] & (1 << i)) && !(lasttouched[s] & (1 << i))) {
-        Serial.print("Sensor "); Serial.print(s);
-        Serial.print(" Pad "); Serial.print(i);
+      if ((currtouched[ch] & _BV(i)) && !(lasttouched[ch] & _BV(i))) {
+        Serial.print("Ch "); Serial.print(ch);
+        Serial.print(" - electrode "); Serial.print(i);
         Serial.println(" touched");
       }
-      // Pad just released
-      if (!(currtouched[s] & (1 << i)) && (lasttouched[s] & (1 << i))) {
-        Serial.print("Sensor "); Serial.print(s);
-        Serial.print(" Pad "); Serial.print(i);
+      if (!(currtouched[ch] & _BV(i)) && (lasttouched[ch] & _BV(i))) {
+        Serial.print("Ch "); Serial.print(ch);
+        Serial.print(" - electrode "); Serial.print(i);
         Serial.println(" released");
       }
     }
-    lasttouched[s] = currtouched[s];
+
+    lasttouched[ch] = currtouched[ch];
   }
+
   delay(50);
 }
