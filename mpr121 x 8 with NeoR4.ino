@@ -2,7 +2,7 @@
 #include "Adafruit_MPR121.h"
 
 #define TCA9548A_ADDR 0x70
-#define NUM_MUX_CHANNELS 8
+#define NUM_MUX_CHANNELS 6
 #define MPR121_ADDR 0x5A
 
 #ifndef _BV
