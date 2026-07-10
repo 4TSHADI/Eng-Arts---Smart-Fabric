@@ -1,0 +1,190 @@
+#include <Wire.h>
+#include <Adafruit_MPR121.h>
+#include <Adafruit_NeoPixel.h>
+
+// ---------------- CONFIG ----------------
+#define MATRIX_WIDTH   16
+#define MATRIX_HEIGHT  16
+#define DATA_PIN       6         
+#define NEOPIXEL_TYPE  (NEO_GRB + NEO_KHZ800)
+
+#define NUM_COL_ELECTRODES 6      
+#define NUM_ROW_ELECTRODES 6     
+#define ROW_ELECTRODE_BASE 6
+
+#define MPR121_I2C_ADDR 0x5A
+
+#define TOUCH_THRESH   40
+#define RELEASE_THRESH 20
+
+#define DECAY_FACTOR   0.85f      
+#define DEPOSIT_GAIN   255.0f     
+#define LOOP_BUDGET_MS 50
+
+#define ELECTRODE_TO_LED_SCALE ((float)(MATRIX_WIDTH - 1) / (float)(NUM_COL_ELECTRODES - 1))
+
+Adafruit_NeoPixel strip(MATRIX_WIDTH * MATRIX_HEIGHT, DATA_PIN, NEOPIXEL_TYPE);
+Adafruit_MPR121 cap = Adafruit_MPR121();
+
+float brightness[MATRIX_HEIGHT][MATRIX_WIDTH]; 
+
+uint16_t XY(uint8_t x, uint8_t y) {
+  if (y % 2 == 0) {
+    return y * MATRIX_WIDTH + (MATRIX_WIDTH - 1 - x);
+  } else {
+    return y * MATRIX_WIDTH + x;
+  }
+}
+
+// ---------------- SETUP ----------------
+void setup() {
+  Serial.begin(9600);
+  uint32_t t0 = millis();
+  while (!Serial && millis() - t0 < 1500) { }
+
+  Wire.begin();
+
+  if (!cap.begin(MPR121_I2C_ADDR, &Wire)) {
+    Serial.println("MPR121 not found - check wiring.");
+    while (1) { delay(1000); }
+  }
+  cap.setAutoconfig(true);
+  cap.setThresholds(TOUCH_THRESH, RELEASE_THRESH);
+
+  strip.begin();
+  strip.setBrightness(150);
+  strip.clear();
+  strip.show();
+
+  memset(brightness, 0, sizeof(brightness));
+
+  Serial.println("Touch light trail ready (full 16x16 matrix).");
+}
+
+bool getTouchPoint(float &electrodeRow, float &electrodeCol) {
+  uint16_t touched = cap.touched();
+
+  int bestCol = -1, secondCol = -1;
+  int bestRow = -1, secondRow = -1;
+  uint16_t bestColVal = 0, secondColVal = 0;
+  uint16_t bestRowVal = 0, secondRowVal = 0;
+
+  for (int e = 0; e < NUM_COL_ELECTRODES; e++) {
+    if (touched & (1 << e)) {
+      uint16_t strength = cap.baselineData(e) - cap.filteredData(e);
+      if (strength > bestColVal) {
+        secondColVal = bestColVal; secondCol = bestCol;
+        bestColVal = strength; bestCol = e;
+      } else if (strength > secondColVal) {
+        secondColVal = strength; secondCol = e;
+      }
+    }
+  }
+
+  for (int e = 0; e < NUM_ROW_ELECTRODES; e++) {
+    int idx = ROW_ELECTRODE_BASE + e;
+    if (touched & (1 << idx)) {
+      uint16_t strength = cap.baselineData(idx) - cap.filteredData(idx);
+      if (strength > bestRowVal) {
+        secondRowVal = bestRowVal; secondRow = bestRow;
+        bestRowVal = strength; bestRow = e;
+      } else if (strength > secondRowVal) {
+        secondRowVal = strength; secondRow = e;
+      }
+    }
+  }
+
+  if (bestCol < 0 || bestRow < 0) return false; 
+
+  electrodeCol = (float)bestCol;
+  if (secondCol >= 0 && (bestColVal + secondColVal) > 0) {
+    float w = (float)secondColVal / (float)(bestColVal + secondColVal);
+    float dir = (secondCol > bestCol) ? 1.0f : -1.0f;
+    electrodeCol = bestCol + dir * w;
+  }
+
+  electrodeRow = (float)bestRow;
+  if (secondRow >= 0 && (bestRowVal + secondRowVal) > 0) {
+    float w = (float)secondRowVal / (float)(bestRowVal + secondRowVal);
+    float dir = (secondRow > bestRow) ? 1.0f : -1.0f;
+    electrodeRow = bestRow + dir * w;
+  }
+
+  if (electrodeCol < 0) electrodeCol = 0;
+  if (electrodeCol > NUM_COL_ELECTRODES - 1) electrodeCol = NUM_COL_ELECTRODES - 1;
+  if (electrodeRow < 0) electrodeRow = 0;
+  if (electrodeRow > NUM_ROW_ELECTRODES - 1) electrodeRow = NUM_ROW_ELECTRODES - 1;
+
+  return true;
+}
+
+void decayBuffer() {
+  for (int y = 0; y < MATRIX_HEIGHT; y++) {
+    for (int x = 0; x < MATRIX_WIDTH; x++) {
+      brightness[y][x] *= DECAY_FACTOR;
+      if (brightness[y][x] < 0.5f) brightness[y][x] = 0.0f;
+    }
+  }
+}
+
+void depositBilinear(float ledRow, float ledCol) {
+  int y0 = (int)floor(ledRow);
+  int x0 = (int)floor(ledCol);
+  int y1 = min(y0 + 1, MATRIX_HEIGHT - 1);
+  int x1 = min(x0 + 1, MATRIX_WIDTH - 1);
+
+  float fy = ledRow - y0;
+  float fx = ledCol - x0;
+
+  float w00 = (1 - fy) * (1 - fx);
+  float w01 = (1 - fy) * fx;
+  float w10 = fy * (1 - fx);
+  float w11 = fy * fx;
+
+  brightness[y0][x0] += DEPOSIT_GAIN * w00;
+  brightness[y0][x1] += DEPOSIT_GAIN * w01;
+  brightness[y1][x0] += DEPOSIT_GAIN * w10;
+  brightness[y1][x1] += DEPOSIT_GAIN * w11;
+
+  for (int y = 0; y < MATRIX_HEIGHT; y++)
+    for (int x = 0; x < MATRIX_WIDTH; x++)
+      if (brightness[y][x] > 255.0f) brightness[y][x] = 255.0f;
+}
+
+void renderBuffer() {
+  strip.clear();
+  for (int y = 0; y < MATRIX_HEIGHT; y++) {
+    for (int x = 0; x < MATRIX_WIDTH; x++) {
+      uint8_t b = (uint8_t)brightness[y][x];
+      if (b > 0) {
+        uint32_t color = strip.gamma32(strip.ColorHSV(29000, 200, b)); 
+        strip.setPixelColor(XY(x, y), color);
+      }
+    }
+  }
+  strip.show();
+}
+
+void loop() {
+  uint32_t frameStart = millis();
+
+  float electrodeRow, electrodeCol;
+  bool active = getTouchPoint(electrodeRow, electrodeCol);
+
+  decayBuffer();
+  if (active) {
+    float ledRow = electrodeRow * ELECTRODE_TO_LED_SCALE;
+    float ledCol = electrodeCol * ELECTRODE_TO_LED_SCALE;
+    depositBilinear(ledRow, ledCol);
+  }
+  renderBuffer();
+
+  uint32_t elapsed = millis() - frameStart;
+  if (elapsed < LOOP_BUDGET_MS) {
+    delay(LOOP_BUDGET_MS - elapsed);
+  } else {
+    Serial.print("Warning: frame took ");
+    Serial.print(elapsed);
+    Serial.println(" ms, over 50ms budget.");
+  }
+}
