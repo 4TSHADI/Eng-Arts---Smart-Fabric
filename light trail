@@ -12,10 +12,10 @@
 #define NUM_ROW_ELECTRODES 6     
 #define ROW_ELECTRODE_BASE 6
 
-#define MPR121_I2C_ADDR 0x5A
+#define MPR121_I2C_ADDR 0x5B
 
-#define TOUCH_THRESH   40
-#define RELEASE_THRESH 20
+#define TOUCH_THRESH   16
+#define RELEASE_THRESH 8
 
 #define DECAY_FACTOR   0.85f      
 #define DEPOSIT_GAIN   255.0f     
