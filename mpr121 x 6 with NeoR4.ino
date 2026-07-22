@@ -21,7 +21,6 @@ void tcaSelect(uint8_t channel) {
   Wire.write(1 << channel);
   Wire.endTransmission();
 }
-
 void setup() {
   Serial.begin(9600);
   while (!Serial) { delay(10); }

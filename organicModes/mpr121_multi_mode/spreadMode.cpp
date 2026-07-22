@@ -19,7 +19,7 @@ const float spreadY = 8;
 
 
 // LED brightness
-const uint8_t matrixBrightness = 75;
+const uint8_t matrixBrightness = 90;
 
 // Set so only goes once
 bool spreadOut = false;
@@ -44,6 +44,42 @@ struct Particle
 };
 
 Particle particles[particleNUM];
+static uint32_t noiseFrame = 0;
+
+float fade(float t) {
+  return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+float lerp(float a, float b, float t) {
+  return a + t * (b - a);
+}
+
+float fract(float x) {
+  return x - floor(x);
+}
+
+float hash2D(float x, float y) {
+  return fract(sin(x * 12.9898f + y * 78.233f) * 43758.5453f);
+}
+
+float perlinNoise2D(float x, float y) {
+  int x0 = floor(x);
+  int y0 = floor(y);
+  float xf = x - x0;
+  float yf = y - y0;
+
+  float u = fade(xf);
+  float v = fade(yf);
+
+  float n00 = hash2D(x0, y0);
+  float n10 = hash2D(x0 + 1, y0);
+  float n01 = hash2D(x0, y0 + 1);
+  float n11 = hash2D(x0 + 1, y0 + 1);
+
+  float x1 = lerp(n00, n10, u);
+  float x2 = lerp(n01, n11, u);
+  return lerp(x1, x2, v) * 2.0f - 1.0f;
+}
 
 // Makes the trail effect for the objects
 void trail(Adafruit_NeoPixel& strip)
@@ -93,6 +129,11 @@ void spread(float x,float y)
 }
 
 void SpreadMode::onTouch(Adafruit_NeoPixel& strip, uint8_t pin, bool isTouched, int16_t pressure) {
+  Serial.println();
+  Serial.print("Pressure "); Serial.print(pressure);
+  Serial.println();
+  Serial.print("Pin "); Serial.print(pin);
+  Serial.println();
   if (!isTouched || pin >= 12 || spreadOut)
         return;
 
@@ -124,9 +165,10 @@ void SpreadMode::update(Adafruit_NeoPixel& strip)
 
         particles[i].brightness -= 2;
 
-
-        particles[i].x += particles[i].dx;
-        particles[i].y += particles[i].dy;
+        float noise = perlinNoise2D(particles[i].x * 0.18f + noiseFrame * 0.01f,
+                                     particles[i].y * 0.18f + noiseFrame * 0.01f);
+        particles[i].x += noise * 0.04f;
+        particles[i].y += noise * 0.04f;
 
         int xx = round(particles[i].x);
         int yy = round(particles[i].y);
@@ -153,6 +195,7 @@ void SpreadMode::update(Adafruit_NeoPixel& strip)
     }
 
     strip.show();
+    noiseFrame++;
 
     if (!anyActive)
     {

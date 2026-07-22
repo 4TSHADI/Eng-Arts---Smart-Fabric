@@ -8,8 +8,13 @@
 const int WIDTH = 16;
 const int HEIGHT = 16;
 const int NUM_LEDS = 256;
-const int LED_PIN = 6;
-const int MPR121_ADDR = 0x5A;
+
+// Nano/Uno-compatible data pin for the NeoPixel strip.
+const uint8_t LED_PIN = 6;
+
+// MPR121 I2C address.
+const uint8_t MPR121_ADDR = 0x5B;
+
 struct Point {
     uint8_t x;
     uint8_t y;

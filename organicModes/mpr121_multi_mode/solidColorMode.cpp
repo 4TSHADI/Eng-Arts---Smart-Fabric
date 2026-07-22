@@ -8,10 +8,10 @@ void SolidColorMode::enter(Adafruit_NeoPixel& strip) {
   strip.show();
 }
 
-void SolidColorMode::onTouch(Adafruit_NeoPixel& strip, uint8_t pin, bool isTouched, int16_t pressure) = 0;
+void SolidColorMode::onTouch(Adafruit_NeoPixel& strip, uint8_t pin, bool isTouched, int16_t pressure)
  {
   if (pin >= 12) return;
-
+  Serial.print("Pressure "); Serial.print(pressure);
   // For Solid Color Mode, set region to Red on touch, off on release
   uint32_t color = isTouched ? strip.Color(0, 255, 0) : strip.Color(0, 0, 0);
   Region r = regions[pin];
@@ -24,11 +24,7 @@ void SolidColorMode::onTouch(Adafruit_NeoPixel& strip, uint8_t pin, bool isTouch
       }
     }
   }
-  // center
-  Point p = centerCoordinates[pin];
-  uint16_t idx = XY(p.x,p.y);
 
-  strip.setPixelColor(idx, strip.Color(0, 0, 255));
 
   strip.show();
 }

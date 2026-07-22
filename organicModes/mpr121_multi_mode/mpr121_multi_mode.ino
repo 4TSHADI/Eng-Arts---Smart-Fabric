@@ -38,7 +38,7 @@ void switchMode(LightingMode* newMode) {
 
 void setup() {
   Serial.begin(9600);
-  while (!Serial) { delay(10); }
+  delay(200); // Let USB serial settle on a Nano before printing
 
   // Initialize NeoPixel Matrix
   strip.begin();
@@ -116,7 +116,7 @@ void loop() {
       // Electrode Released
       if (!(currtouched & _BV(i)) && (lasttouched & _BV(i))) {
         // Serial.print("Electrode "); Serial.print(i); Serial.println(" released");
-        activeMode->onTouch(strip, i, false);
+        activeMode->onTouch(strip, i, false,pressure);
       }
     }
 
