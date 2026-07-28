@@ -1,0 +1,20 @@
+Output: Gerber Files
+Type  : Gerber
+From  : Variant [[No Variations]] of Project [13X13 Matrix.PrjPcb]
+   Generated File[13X13 Matrix.GTO]
+   Generated File[13X13 Matrix.GTP]
+   Generated File[13X13 Matrix.GTS]
+   Generated File[13X13 Matrix.GTL]
+   Generated File[13X13 Matrix.GBL]
+   Generated File[13X13 Matrix.GBS]
+   Generated File[13X13 Matrix.GBP]
+   Generated File[13X13 Matrix.GBO]
+   Generated File[13X13 Matrix.GM]
+   Generated File[13X13 Matrix.EXTREP]
+   Generated File[13X13 Matrix.REP]
+
+
+Files Generated   : 11
+Documents Printed : 0
+
+Finished Output Generation At 15:21:25 On 22/04/2024
