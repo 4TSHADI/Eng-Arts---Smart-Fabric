@@ -1,0 +1,64 @@
+#include <Adafruit_NeoPixel.h>
+
+#define PIXELS_PER_ROW 13 // 13 LEDs in each line
+#define NUM_ROWS       12 // 12 dedicated signal wires
+
+// Define the 12 digital pins on the Uno R4
+const uint8_t rowPins[NUM_ROWS] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, A0};
+
+// Create an array of NeoPixel strip objects
+Adafruit_NeoPixel rows[NUM_ROWS] = {
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[0], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[1], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[2], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[3], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[4], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[5], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[6], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[7], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[8], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[9], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[10], NEO_GRB + NEO_KHZ800),
+  Adafruit_NeoPixel(PIXELS_PER_ROW, rowPins[11], NEO_GRB + NEO_KHZ800)
+};
+
+void setup() {
+  for (int r = 0; r < NUM_ROWS; r++) {
+    rows[r].begin();
+    rows[r].setBrightness(30); // Low brightness for safety
+    rows[r].show();
+  }
+}
+
+void loop() {
+  // --- TEST 1: Row Scanner ---
+  // Turns each row ON green one by one to verify physical pin order
+  for (int r = 0; r < NUM_ROWS; r++) {
+    rows[r].fill(rows[r].Color(0, 255, 0)); // Solid Green
+    rows[r].show();
+    delay(200);
+    rows[r].clear();
+    rows[r].show();
+  }
+
+  delay(500);
+
+  // --- TEST 2: Multi-Row Synchronized Rainbow ---
+  for (long firstPixelHue = 0; firstPixelHue < 3 * 65536; firstPixelHue += 256) {
+    for (int r = 0; r < NUM_ROWS; r++) {
+      for (int i = 0; i < PIXELS_PER_ROW; i++) {
+        int pixelHue = firstPixelHue + (i * 65536L / PIXELS_PER_ROW) + (r * 1000);
+        rows[r].setPixelColor(i, rows[r].gamma32(rows[r].ColorHSV(pixelHue)));
+      }
+      rows[r].show();
+    }
+    delay(10);
+  }
+
+  // Clear all pixels at the end of cycle
+  for (int r = 0; r < NUM_ROWS; r++) {
+    rows[r].clear();
+    rows[r].show();
+  }
+  delay(1000);
+}
