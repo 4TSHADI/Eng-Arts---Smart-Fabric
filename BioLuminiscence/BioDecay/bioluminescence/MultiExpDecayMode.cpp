@@ -21,20 +21,19 @@ void MultiExpDecayMode::enter(Adafruit_NeoPixel& strip) {
 }
 
 void MultiExpDecayMode::onTouch(Adafruit_NeoPixel& strip,
-                                const TouchEvent& event) {
-  if (event.xCell >= CELLS_PER_AXIS || event.yCell >= CELLS_PER_AXIS) return;
+                                 const TouchEvent& event) {
   if (!event.isTouched) return;
+  if (event.xCell >= TOUCH_GRID_SIZE || event.yCell >= TOUCH_GRID_SIZE) return;
 
-  // Pressure scales the overall amplitude [50%-100%] of A1+A2
-  _scale          = constrain(map(event.pressure, 0, 150, 50, 100), 50, 100) / 100.0f;
+  _scale = constrain(map(event.pressure, 0, 150, 50, 100), 50, 100) / 100.0f;
   _triggeredPoint = touchPointIndex(event.panelId, event.xCell, event.yCell);
-  _startTime      = millis();
-  _active         = true;
+  _startTime = millis();
+  _active = true;
 
-  Serial.print("[MultiExpDecay] Touch panel="); Serial.print(event.panelId);
-  Serial.print("  x="); Serial.print(event.xCell);
-  Serial.print("  y="); Serial.print(event.yCell);
-  Serial.print("  pressure="); Serial.print(event.pressure);
+  Serial.print("[MultiExpDecay] panel="); Serial.print(event.panelId);
+  Serial.print(" x="); Serial.print(event.xCell);
+  Serial.print(" y="); Serial.print(event.yCell);
+  Serial.print(" pressure="); Serial.print(event.pressure);
   Serial.print("  scale="); Serial.println(_scale);
 }
 
@@ -45,10 +44,7 @@ void MultiExpDecayMode::update(Adafruit_NeoPixel& strip) {
   float I     = computeIntensity(t_ms);
   uint8_t bri = intensityToBrightness(I);
 
-  PinSection section = getTouchRegionBounds(touchPointPanel(_triggeredPoint),
-                                            touchPointX(_triggeredPoint),
-                                            touchPointY(_triggeredPoint));
-
+  PinSection section = getTouchRegionBounds(touchPointPanel(_triggeredPoint), touchPointX(_triggeredPoint), touchPointY(_triggeredPoint));
   strip.clear();
   for (uint8_t y = section.yStart; y <= section.yEnd; y++) {
     for (uint8_t x = section.xStart; x <= section.xEnd; x++) {

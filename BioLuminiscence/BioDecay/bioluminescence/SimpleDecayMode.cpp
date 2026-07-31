@@ -2,12 +2,12 @@
 // SimpleDecayMode.cpp
 // MODEL 1 – I(t) = I₀ · e^(−t/τ)
 //
-// Per-pin behaviour:
-//   • Touch  → start an independent exponential decay for that pin
-//   • update() → for every active pin, evaluate I(t) and paint its
+// Per-touch-point behaviour:
+//   • Touch  → start an independent exponential decay for that cell
+//   • update() → for every active cell, evaluate I(t) and paint its
 //                region onto the frame buffer with a Gaussian
 //                brightness gradient (bright centre, dark edges)
-//   • Multiple pins can glow simultaneously
+//   • Multiple touch points can glow simultaneously
 // ============================================================
 #include "SimpleDecayMode.h"
 
@@ -17,47 +17,41 @@ void SimpleDecayMode::enter(Adafruit_NeoPixel& strip) {
   strip.clear();
   strip.show();
 
-  // Reset all per-pin state
-  for (uint8_t p = 0; p < NUM_TOUCH_POINTS; p++) {
-    _pins[p].active    = false;
-    _pins[p].startTime = 0;
-    _pins[p].I0_actual = 0.0f;
+  for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
+    _touchStates[p].active    = false;
+    _touchStates[p].startTime = 0;
+    _touchStates[p].I0_actual = 0.0f;
   }
 
   Serial.println("[SimpleDecay] Entered – touch coordinates trigger compact regions.");
 }
 
 void SimpleDecayMode::onTouch(Adafruit_NeoPixel& strip,
-                              const TouchEvent& event) {
-  if (event.xCell >= CELLS_PER_AXIS || event.yCell >= CELLS_PER_AXIS) return;
+                               const TouchEvent& event) {
+  if (event.xCell >= TOUCH_GRID_SIZE || event.yCell >= TOUCH_GRID_SIZE) return;
 
   uint16_t touchPoint = touchPointIndex(event.panelId, event.xCell, event.yCell);
 
   if (event.isTouched) {
-    // Scale peak brightness with pressure; floor at 80 so a light touch
-    // is still clearly visible.
-    _pins[touchPoint].I0_actual = constrain(map(event.pressure, 0, 150, 80, 255), 80, 255);
-    _pins[touchPoint].startTime = millis();
-    _pins[touchPoint].active    = true;
+    _touchStates[touchPoint].I0_actual = constrain(map(event.pressure, 0, 150, 80, 255), 80, 255);
+    _touchStates[touchPoint].startTime = millis();
+    _touchStates[touchPoint].active    = true;
 
-    Serial.print("[SimpleDecay] panel=");   Serial.print(event.panelId);
-    Serial.print("  x=");                   Serial.print(event.xCell);
-    Serial.print("  y=");                   Serial.print(event.yCell);
-    Serial.print("  pressure=");            Serial.print(event.pressure);
-    Serial.print("  I0=");                  Serial.println(_pins[touchPoint].I0_actual);
+    Serial.print("[SimpleDecay] panel="); Serial.print(event.panelId);
+    Serial.print(" x="); Serial.print(event.xCell);
+    Serial.print(" y="); Serial.print(event.yCell);
+    Serial.print(" pressure="); Serial.print(event.pressure);
+    Serial.print(" I0="); Serial.println(_touchStates[touchPoint].I0_actual);
   }
-  // Finger-up: let the decay finish naturally (don't kill it early)
 }
 
 void SimpleDecayMode::update(Adafruit_NeoPixel& strip) {
-  // Check if anything is active
   bool anyActive = false;
-  for (uint8_t p = 0; p < NUM_TOUCH_POINTS; p++) {
-    if (_pins[p].active) { anyActive = true; break; }
+  for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
+    if (_touchStates[p].active) { anyActive = true; break; }
   }
   if (!anyActive) return;
 
-  // Rebuild the frame from scratch each tick so decayed pins fade cleanly
   strip.clear();
   renderFrame(strip);
   strip.show();
@@ -68,24 +62,20 @@ void SimpleDecayMode::update(Adafruit_NeoPixel& strip) {
 void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
   unsigned long now = millis();
 
-  for (uint8_t p = 0; p < NUM_TOUCH_POINTS; p++) {
-    if (!_pins[p].active) continue;
+  for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
+    if (!_touchStates[p].active) continue;
 
-    float t_ms = (float)(now - _pins[p].startTime);
-    float I    = computeIntensity(_pins[p], t_ms); // peak intensity 0-255
+    float t_ms = (float)(now - _touchStates[p].startTime);
+    float I    = computeIntensity(_touchStates[p], t_ms);
 
     if (I < 1.0f) {
-      // Decay finished – silence this pin
-      _pins[p].active = false;
+      _touchStates[p].active = false;
       Serial.print("[SimpleDecay] touchPoint="); Serial.print(p);
       Serial.println(" decay complete.");
       continue;
     }
 
-    // ── Gaussian region draw ───────────────────────────────
     PinRegion region = getTouchRegion(touchPointPanel(p), touchPointX(p), touchPointY(p));
-
-    // Broaden the glow slightly so the colour diffuses outward more cleanly.
     const float spreadX = region.sigmaX * 1.25f;
     const float spreadY = region.sigmaY * 1.25f;
 
@@ -101,20 +91,17 @@ void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
         float gau = gaussianBrightness(dx, dy, spreadX, spreadY);
         gau = powf(gau, 0.85f); // soften the falloff for a cleaner edge
 
-        // Pixel brightness = decayed intensity × softened Gaussian falloff
         float scaledI = I * gau;
-        if (scaledI < 1.0f) continue; // skip fully dark pixels
+        if (scaledI < 1.0f) continue;
 
         uint8_t bri = (uint8_t)constrain(scaledI, 0.0f, 255.0f);
 
         uint16_t idx = XY((uint8_t)x, (uint8_t)y);
         if (idx >= NUM_LEDS) continue;
 
-        // Accumulate softly so overlapping glows blend instead of snapping.
         uint32_t existing = strip.getPixelColor(idx);
         uint32_t newColor  = bioColor(strip, bri);
 
-        // Extract green & blue channels (no red in our palette)
         uint8_t eG = (existing >> 8)  & 0xFF;
         uint8_t eB = (existing)       & 0xFF;
         uint8_t nG = (newColor  >> 8) & 0xFF;
@@ -133,7 +120,7 @@ void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
 
 // ── Math ──────────────────────────────────────────────────────
 
-float SimpleDecayMode::computeIntensity(const PinDecay& pd, float t_ms) {
+float SimpleDecayMode::computeIntensity(const TouchDecayState& state, float t_ms) {
   //  I(t) = I₀ · e^(−t/τ)
-  return pd.I0_actual * expf(-t_ms / tau);
+  return state.I0_actual * expf(-t_ms / tau);
 }

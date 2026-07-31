@@ -4,7 +4,7 @@
 //
 //   I(t) = I₀ · e^(−t/τ)
 //
-// Each touch cell has its own independent decay so multiple points
+// Each touch point has its own independent decay so multiple cells
 // can glow at the same time.  The glow of each region is brightest
 // at its centre and falls off with a Gaussian profile.
 // ============================================================
@@ -14,8 +14,8 @@
 #include "DecayMode.h"
 
 // ── Per-touch decay state ────────────────────────────────────
-struct PinDecay {
-  bool          active;      // Is a decay running on this pin?
+struct TouchDecayState {
+  bool          active;      // Is a decay running on this touch point?
   unsigned long startTime;   // millis() when it was triggered
   float         I0_actual;   // Peak intensity for this trigger [0-255]
 };
@@ -36,12 +36,12 @@ public:
   const char* getName() override { return "Simple Decay  I(t)=I0*exp(-t/tau)"; }
 
 private:
-  PinDecay _pins[NUM_TOUCH_POINTS]; // independent state per touch cell
+  TouchDecayState _touchStates[NUM_TOUCH_POINTS];
 
-  // Evaluate I(t) for one pin's decay
-  float computeIntensity(const PinDecay& pd, float t_ms);
+  // Evaluate I(t) for one touch-point decay
+  float computeIntensity(const TouchDecayState& state, float t_ms);
 
-  // Render all active pin glows onto the strip buffer (no show())
+  // Render all active touch-point glows onto the strip buffer (no show())
   void renderFrame(Adafruit_NeoPixel& strip);
 };
 

@@ -2,14 +2,14 @@
 // HeatMapMode.h
 // MODEL – Touch-Accumulating Heat Map
 //
-// Each touch cell stores a persistent "heat" level in [0.0, 1.0].
+// Each touch point stores a persistent "heat" level in [0.0, 1.0].
 //   • Every touch INCREASES the heat for that cell (accumulates).
 //   • When not being touched, heat DECAYS slowly toward 0.
 //   • Heat  1.0 → red   (most-touched / hottest)
 //   • Heat  0.5 → yellow / orange
 //   • Heat  0.0 → green  (least-touched / coolest)
 //
-// Spatial blending: each pin's Gaussian region spills onto
+// Spatial blending: each touch point's Gaussian region spills onto
 // adjacent pixels, so a hot zone transitions smoothly into
 // cooler neighbours — exactly like a thermal heat map.
 // ============================================================
@@ -18,8 +18,8 @@
 
 #include "DecayMode.h"
 
-// ── Per-pin heat state ───────────────────────────────────────
-struct PinHeat {
+// ── Per-touch-point heat state ───────────────────────────────
+struct TouchHeatState {
   float         heat;        // accumulated heat level  [0.0 – 1.0]
   float         brightness;  // current peak brightness [0 – 255]
   bool          isTouched;   // finger currently down?
@@ -57,7 +57,7 @@ public:
   const char* getName() override { return "Heat Map  (touch -> red, cool -> green)"; }
 
 private:
-  PinHeat      _pins[NUM_TOUCH_POINTS];
+  TouchHeatState _touchStates[NUM_TOUCH_POINTS];
   unsigned long _lastUpdate;   // millis() of previous update() call
 
   // Render the full heat map onto the strip buffer (no show()).

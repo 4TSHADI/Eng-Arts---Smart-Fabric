@@ -4,7 +4,7 @@
 //
 // Behaviour summary
 // ─────────────────
-//  • Each electrode maintains a persistent "heat" value H ∈ [0,1].
+//  • Each touch point maintains a persistent "heat" value H ∈ [0,1].
 //  • Touch  → H increases by heatPerTouch (clamped to 1.0).
 //  • Idle   → H decreases at coolRate units·s⁻¹.
 //  • Render → heat mapped through green→yellow→orange→red palette,
@@ -24,11 +24,11 @@ void HeatMapMode::enter(Adafruit_NeoPixel& strip) {
 
   _lastUpdate = millis();
 
-  for (uint8_t p = 0; p < NUM_TOUCH_POINTS; p++) {
-    _pins[p].heat       = 0.0f;
-    _pins[p].brightness = 0.0f;
-    _pins[p].isTouched  = false;
-    _pins[p].lastTouch  = 0;
+  for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
+    _touchStates[p].heat       = 0.0f;
+    _touchStates[p].brightness = 0.0f;
+    _touchStates[p].isTouched  = false;
+    _touchStates[p].lastTouch  = 0;
   }
 
   Serial.println("[HeatMap] Entered – touch coordinates to build heat.");
@@ -38,29 +38,26 @@ void HeatMapMode::enter(Adafruit_NeoPixel& strip) {
 // ─────────────────────────────────────────────────────────────
 
 void HeatMapMode::onTouch(Adafruit_NeoPixel& strip,
-                          const TouchEvent& event) {
-  if (event.xCell >= CELLS_PER_AXIS || event.yCell >= CELLS_PER_AXIS) return;
+                           const TouchEvent& event) {
+  if (event.xCell >= TOUCH_GRID_SIZE || event.yCell >= TOUCH_GRID_SIZE) return;
 
   uint16_t touchPoint = touchPointIndex(event.panelId, event.xCell, event.yCell);
 
-  _pins[touchPoint].isTouched = event.isTouched;
+  _touchStates[touchPoint].isTouched = event.isTouched;
 
   if (event.isTouched) {
-    // Accumulate heat – heavier pressure = bigger boost (optional flavour).
     float boost = heatPerTouch * constrain(map(event.pressure, 0, 150, 80, 150), 80, 150) / 150.0f;
-    _pins[touchPoint].heat = min(1.0f, _pins[touchPoint].heat + boost);
+    _touchStates[touchPoint].heat = min(1.0f, _touchStates[touchPoint].heat + boost);
 
-    // Also give a bright flash so the touch is immediately visible.
-    _pins[touchPoint].brightness  = constrain(map(event.pressure, 0, 150, 120, 255), 120, 255);
-    _pins[touchPoint].lastTouch   = millis();
+    _touchStates[touchPoint].brightness  = constrain(map(event.pressure, 0, 150, 120, 255), 120, 255);
+    _touchStates[touchPoint].lastTouch   = millis();
 
-    Serial.print("[HeatMap] panel=");   Serial.print(event.panelId);
-    Serial.print("  x=");               Serial.print(event.xCell);
-    Serial.print("  y=");               Serial.print(event.yCell);
-    Serial.print("  pressure=");        Serial.print(event.pressure);
-    Serial.print("  heat=");            Serial.println(_pins[touchPoint].heat, 3);
+    Serial.print("[HeatMap] panel="); Serial.print(event.panelId);
+    Serial.print(" x="); Serial.print(event.xCell);
+    Serial.print(" y="); Serial.print(event.yCell);
+    Serial.print(" pressure="); Serial.print(event.pressure);
+    Serial.print(" heat="); Serial.println(_touchStates[touchPoint].heat, 3);
   }
-  // Finger-up: let heat decay naturally — nothing extra needed.
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -75,31 +72,23 @@ void HeatMapMode::update(Adafruit_NeoPixel& strip) {
 
   bool anyVisible = false;
 
-  for (uint8_t p = 0; p < NUM_TOUCH_POINTS; p++) {
-    // ── 1. Cool idle pins ─────────────────────────────────
-    if (!_pins[p].isTouched) {
-      _pins[p].heat -= coolRate * dt_s;
-      if (_pins[p].heat < 0.0f) _pins[p].heat = 0.0f;
+  for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
+    if (!_touchStates[p].isTouched) {
+      _touchStates[p].heat -= coolRate * dt_s;
+      if (_touchStates[p].heat < 0.0f) _touchStates[p].heat = 0.0f;
     }
 
-    // ── 2. Decay the flash brightness ─────────────────────
-    float t_ms   = (float)(now - _pins[p].lastTouch);
-    float flashI = _pins[p].brightness * expf(-t_ms / flashTau);
+    float t_ms   = (float)(now - _touchStates[p].lastTouch);
+    float flashI = _touchStates[p].brightness * expf(-t_ms / flashTau);
 
-    // Floor brightness from heat so that even a cool (green) zone
-    // has a faint glow once it has been touched at least a little.
-    float heatFloor = ambientBri + _pins[p].heat * 180.0f;
-
-    // Final per-pin brightness = max of flash tail and heat floor.
+    float heatFloor = ambientBri + _touchStates[p].heat * 180.0f;
     float bri = max(flashI, heatFloor);
+    _touchStates[p].brightness = (bri > flashI) ? bri : flashI;
 
-    // Store computed brightness for renderFrame.
-    _pins[p].brightness = (bri > flashI) ? bri : flashI;
-
-    if (_pins[p].heat > 0.002f || flashI > 1.0f) anyVisible = true;
+    if (_touchStates[p].heat > 0.002f || flashI > 1.0f) anyVisible = true;
   }
 
-  if (!anyVisible) return; // nothing to draw
+  if (!anyVisible) return;
 
   strip.clear();
   renderFrame(strip);
@@ -111,16 +100,14 @@ void HeatMapMode::update(Adafruit_NeoPixel& strip) {
 void HeatMapMode::renderFrame(Adafruit_NeoPixel& strip) {
   unsigned long now = millis();
 
-  for (uint8_t p = 0; p < NUM_TOUCH_POINTS; p++) {
-    // Compute effective brightness for this pin this frame.
-    float t_ms   = (float)(now - _pins[p].lastTouch);
-    float flashI = _pins[p].brightness * expf(-t_ms / flashTau);
-    float heatFloor = ambientBri + _pins[p].heat * 180.0f;
+  for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
+    float t_ms   = (float)(now - _touchStates[p].lastTouch);
+    float flashI = _touchStates[p].brightness * expf(-t_ms / flashTau);
+    float heatFloor = ambientBri + _touchStates[p].heat * 180.0f;
     float bri    = max(flashI, heatFloor);
 
-    if (bri < 1.0f && _pins[p].heat < 0.002f) continue;
+    if (bri < 1.0f && _touchStates[p].heat < 0.002f) continue;
 
-    // Broaden sigma slightly for a softer glow edge.
     PinRegion region = getTouchRegion(touchPointPanel(p), touchPointX(p), touchPointY(p));
     const float spreadX = region.sigmaX * 1.25f;
     const float spreadY = region.sigmaY * 1.25f;
@@ -143,10 +130,9 @@ void HeatMapMode::renderFrame(Adafruit_NeoPixel& strip) {
         uint16_t idx = XY((uint8_t)x, (uint8_t)y);
         if (idx >= NUM_LEDS) continue;
 
-        uint32_t newColor = heatColor(strip, _pins[p].heat,
+        uint32_t newColor = heatColor(strip, _touchStates[p].heat,
                                        constrain(scaledBri, 0.0f, 255.0f));
 
-        // Blend with whatever is already on this pixel (overlapping regions).
         uint32_t existing = strip.getPixelColor(idx);
         uint8_t eR = (existing >> 16) & 0xFF;
         uint8_t eG = (existing >>  8) & 0xFF;
@@ -155,7 +141,6 @@ void HeatMapMode::renderFrame(Adafruit_NeoPixel& strip) {
         uint8_t nG = (newColor  >>  8) & 0xFF;
         uint8_t nB = (newColor)        & 0xFF;
 
-        // Soft-max blend: dominant channel wins, minority adds a hint.
         auto softBlend = [](uint8_t a, uint8_t b) -> uint8_t {
           return (uint8_t)min(255u,
                               (uint16_t)max(a, b) + ((uint16_t)min(a, b) >> 2));

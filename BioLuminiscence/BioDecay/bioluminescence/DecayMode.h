@@ -28,7 +28,10 @@ public:
   virtual void enter(Adafruit_NeoPixel& strip) = 0;
 
   // Called when a touch / release event fires.
-  // The event carries the touched panel plus its local X/Y cell coordinates.
+  //   panelId   : LED panel index driven by this X/Y sensor pair
+  //   xCell/yCell: touched coordinate on the 8x8 touch grid
+  //   isTouched : true = finger down, false = finger lifted
+  //   pressure  : baseline - filtered (proxy for touch strength)
   virtual void onTouch(Adafruit_NeoPixel& strip,
                        const TouchEvent& event) = 0;
 

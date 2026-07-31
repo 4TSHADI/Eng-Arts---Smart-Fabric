@@ -68,11 +68,12 @@ void SpreadDecayMode::spawnFrom(float x, float y, int16_t pressure) {
 void SpreadDecayMode::onTouch(Adafruit_NeoPixel& strip,
                               const TouchEvent& event) {
   if (!event.isTouched) return;
-  if (event.xCell >= CELLS_PER_AXIS || event.yCell >= CELLS_PER_AXIS) return;
+  if (event.xCell >= TOUCH_GRID_SIZE || event.yCell >= TOUCH_GRID_SIZE) return;
 
-  uint8_t x, y;
-  getTouchOrigin(event.panelId, event.xCell, event.yCell, x, y);
-  spawnFrom((float)x, (float)y, event.pressure);
+  PinSection section = getTouchRegionBounds(event.panelId, event.xCell, event.yCell);
+  float spawnX = (float)section.xStart;
+  float spawnY = (float)section.yStart;
+  spawnFrom(spawnX, spawnY, event.pressure);
 }
 
 float SpreadDecayMode::fade(float t) {

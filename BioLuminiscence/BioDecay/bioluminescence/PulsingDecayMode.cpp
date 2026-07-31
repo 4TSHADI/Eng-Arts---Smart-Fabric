@@ -22,18 +22,18 @@ void PulsingDecayMode::enter(Adafruit_NeoPixel& strip) {
 }
 
 void PulsingDecayMode::onTouch(Adafruit_NeoPixel& strip,
-                               const TouchEvent& event) {
-  if (event.xCell >= CELLS_PER_AXIS || event.yCell >= CELLS_PER_AXIS) return;
+                                const TouchEvent& event) {
   if (!event.isTouched) return;
+  if (event.xCell >= TOUCH_GRID_SIZE || event.yCell >= TOUCH_GRID_SIZE) return;
 
-  _I0_actual      = constrain(map(event.pressure, 0, 150, 50, 255), 50, 255);
+  _I0_actual = constrain(map(event.pressure, 0, 150, 50, 255), 50, 255);
   _triggeredPoint = touchPointIndex(event.panelId, event.xCell, event.yCell);
-  _startTime      = millis();
-  _active         = true;
+  _startTime = millis();
+  _active = true;
 
-  Serial.print("[PulsingDecay] Touch panel="); Serial.print(event.panelId);
-  Serial.print("  x="); Serial.print(event.xCell);
-  Serial.print("  y="); Serial.print(event.yCell);
+  Serial.print("[PulsingDecay] panel="); Serial.print(event.panelId);
+  Serial.print(" x="); Serial.print(event.xCell);
+  Serial.print(" y="); Serial.print(event.yCell);
   Serial.print("  I0="); Serial.println(_I0_actual);
 }
 
@@ -43,13 +43,9 @@ void PulsingDecayMode::update(Adafruit_NeoPixel& strip) {
   float t_ms  = (float)(millis() - _startTime);
   float I     = computeIntensity(t_ms);
 
-  // Clamp to [0, 255] – sine can temporarily push below zero
   uint8_t bri = intensityToBrightness(constrain(I, 0.0f, 255.0f));
 
-  PinSection section = getTouchRegionBounds(touchPointPanel(_triggeredPoint),
-                                            touchPointX(_triggeredPoint),
-                                            touchPointY(_triggeredPoint));
-
+  PinSection section = getTouchRegionBounds(touchPointPanel(_triggeredPoint), touchPointX(_triggeredPoint), touchPointY(_triggeredPoint));
   strip.clear();
   for (uint8_t y = section.yStart; y <= section.yEnd; y++) {
     for (uint8_t x = section.xStart; x <= section.xEnd; x++) {
