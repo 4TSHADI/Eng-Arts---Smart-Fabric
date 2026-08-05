@@ -4,8 +4,8 @@
 Adafruit_MPR121 cap = Adafruit_MPR121();
 
 // Define your pins
-const int BARE_PIN = 0;
-const int YARN_PIN = 4;
+const int BARE_PIN = 5;
+const int YARN_PIN = 0;
 
 // I2C Address and Registers for configuring the MPR121 AFE
 static const uint8_t MPR121_ADDR = 0x5A;
@@ -49,7 +49,7 @@ void setup() {
   Serial.println("Letting hardware baseline slowly adapt. DO NOT TOUCH THE SENSORS!");
   
   // Extended 60-second calibration loop
-  for (int i = 30; i > 0; i--) {
+  for (int i = 1; i > 0; i--) {
     Serial.print("Calibrating... ");
     Serial.print(i);
     Serial.println(" seconds remaining.");

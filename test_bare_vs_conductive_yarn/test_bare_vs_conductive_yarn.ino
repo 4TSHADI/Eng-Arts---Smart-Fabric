@@ -4,8 +4,8 @@
 Adafruit_MPR121 cap = Adafruit_MPR121();
 
 // Define which pins you are using for the test
-const int BARE_ELECTRODE_PIN = 4;
-const int YARN_ELECTRODE_PIN = 0;
+const int BARE_ELECTRODE_PIN = 0;
+const int YARN_ELECTRODE_PIN = 4;
 
 void setup() {
   Serial.begin(115200);
