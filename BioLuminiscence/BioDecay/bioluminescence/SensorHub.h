@@ -135,15 +135,17 @@ private:
 
     uint16_t touched = sensor.touched();
 
-    for (uint8_t i = 0; i < TOUCH_GRID_SIZE; ++i) {
-      if (!(touched & (1 << i))) continue;
+    for (uint8_t cell = 0; cell < TOUCH_GRID_SIZE; ++cell) {
+      uint8_t electrode = SENSOR_ELECTRODE_MAP[muxChannel][cell];
+      if (electrode == DISABLED_ELECTRODE || electrode >= ELECTRODES_PER_MPR) continue;
+      if (!(touched & (1 << electrode))) continue;
 
-      int16_t pressure = (int16_t)sensor.baselineData(i) - (int16_t)sensor.filteredData(i);
+      int16_t pressure = (int16_t)sensor.baselineData(electrode) - (int16_t)sensor.filteredData(electrode);
       if (pressure < 0) pressure = 0;
 
       if (!result.valid || pressure > result.pressure) {
         result.valid = true;
-        result.cell = i;
+        result.cell = cell;
         result.pressure = pressure;
       }
     }

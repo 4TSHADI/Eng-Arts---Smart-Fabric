@@ -19,6 +19,7 @@
 #include "SpreadDecayMode.h"
 #include "HeatMapMode.h"
 #include "SolidColorMode.h"
+#include "FlashTestMode.h"
 
 Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 SensorHub sensorHub;
@@ -31,6 +32,7 @@ MultiExpDecayMode multiExpMode;
 SpreadDecayMode spreadMode;
 HeatMapMode heatMapMode;
 SolidColorMode solidColorMode;
+FlashTestMode flashTestMode;
 
 void setup() {
   Serial.begin(9600);
@@ -50,11 +52,12 @@ void setup() {
   modeController.registerMode("Spread Diffusion", &spreadMode);
   modeController.registerMode("Heat Map", &heatMapMode);
   modeController.registerMode("Solid Color", &solidColorMode);
-
+  modeController.registerMode("Flash Test", &flashTestMode);
+                                                             
   modeController.printMenu();
   sensorHub.initSensors();
   modeController.begin(strip);
-  wifiController.begin();
+  // wifiController.begin();
 }
 
 void loop() {

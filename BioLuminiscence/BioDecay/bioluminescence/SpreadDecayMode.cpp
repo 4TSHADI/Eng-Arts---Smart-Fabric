@@ -41,13 +41,16 @@ void SpreadDecayMode::trail(Adafruit_NeoPixel& strip) {
 }
 
 void SpreadDecayMode::spawnFrom(float x, float y, int16_t pressure) {
-  const uint8_t fireflyR = 210;
-  const uint8_t fireflyG = 255;
-  const uint8_t fireflyB = 20;
+  const uint8_t fireflyR = 255;
+  const uint8_t fireflyG = 70;
+  const uint8_t fireflyB = 235;
+  float springKick = massSpringResponse(120.0f, pressure);
+  float speedGain = 1.0f + 0.45f * springKick;
+  float lifeGain = 1.0f + 0.35f * springKick;
 
   for (uint8_t i = 0; i < kParticleCount; i++) {
     float angle = random(0, 360) * PI / 180.0f;
-    float speed = random(15, 60) / 100.0f;
+    float speed = (random(15, 60) / 100.0f) * speedGain;
 
     _particles[i].x = x;
     _particles[i].y = y;
@@ -57,8 +60,10 @@ void SpreadDecayMode::spawnFrom(float x, float y, int16_t pressure) {
     _particles[i].g = fireflyG;
     _particles[i].b = fireflyB;
     _particles[i].life = 0;
-    _particles[i].maxLife = random(30, 70);
-    _particles[i].peakBrightness = 0.4f + (pressure / 150.0f) * 0.6f;
+    _particles[i].maxLife = (uint16_t)(random(30, 70) * lifeGain);
+    _particles[i].peakBrightness = constrain(0.35f + (pressure / 255.0f) * 0.45f + 0.45f * springKick,
+                                             0.0f,
+                                             1.25f);
     _particles[i].active = true;
   }
 
@@ -166,9 +171,9 @@ void SpreadDecayMode::update(Adafruit_NeoPixel& strip) {
                                                         _particles[i].peakBrightness);
 
     if (brightnessFactor > 0.001f) {
-      uint8_t r = (uint8_t)((_particles[i].r * brightnessFactor));
-      uint8_t g = (uint8_t)((_particles[i].g * brightnessFactor * 1.05f));
-      uint8_t b = (uint8_t)((_particles[i].b * brightnessFactor * 0.35f));
+      uint8_t r = (uint8_t)((_particles[i].r * brightnessFactor * 0.95f));
+      uint8_t g = (uint8_t)((_particles[i].g * brightnessFactor * 0.40f));
+      uint8_t b = (uint8_t)((_particles[i].b * brightnessFactor * 1.10f));
 
       strip.setPixelColor(XY((uint8_t)xx, (uint8_t)yy), strip.Color(r, g, b));
     } else {

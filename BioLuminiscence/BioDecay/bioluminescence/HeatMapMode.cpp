@@ -7,7 +7,7 @@
 //  • Each touch point maintains a persistent "heat" value H ∈ [0,1].
 //  • Touch  → H increases by heatPerTouch (clamped to 1.0).
 //  • Idle   → H decreases at coolRate units·s⁻¹.
-//  • Render → heat mapped through green→yellow→orange→red palette,
+//  • Render → heat mapped through blue→cyan→amber→red palette,
 //             painted with a Gaussian gradient so the glow is
 //             brightest at the region centre and fades outward.
 //  • Neighbouring regions share pixels via overlapping Gaussians,
@@ -28,11 +28,12 @@ void HeatMapMode::enter(Adafruit_NeoPixel& strip) {
     _touchStates[p].heat       = 0.0f;
     _touchStates[p].brightness = 0.0f;
     _touchStates[p].isTouched  = false;
+    _touchStates[p].pressure   = 0;
     _touchStates[p].lastTouch  = 0;
   }
 
   Serial.println("[HeatMap] Entered – touch coordinates to build heat.");
-  Serial.println("          Red = hot (often touched), Green = cool (resting).");
+  Serial.println("          Red = hot (often touched), Blue = cool (resting).");
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -46,10 +47,13 @@ void HeatMapMode::onTouch(Adafruit_NeoPixel& strip,
   _touchStates[touchPoint].isTouched = event.isTouched;
 
   if (event.isTouched) {
-    float boost = heatPerTouch * constrain(map(event.pressure, 0, 150, 80, 150), 80, 150) / 150.0f;
+    _touchStates[touchPoint].pressure = event.pressure;
+    float springBoost = massSpringResponse(100.0f, event.pressure);
+    float boost = heatPerTouch * constrain(map(event.pressure, 0, 255, 80, 255), 80, 255) / 255.0f;
+    boost *= (1.0f + 0.45f * springBoost);
     _touchStates[touchPoint].heat = min(1.0f, _touchStates[touchPoint].heat + boost);
 
-    _touchStates[touchPoint].brightness  = constrain(map(event.pressure, 0, 150, 120, 255), 120, 255);
+    _touchStates[touchPoint].brightness  = constrain(map(event.pressure, 0, 255, 120, 255) * (1.0f + 0.35f * springBoost), 120, 255);
     _touchStates[touchPoint].lastTouch   = millis();
 
     Serial.print("[HeatMap] panel="); Serial.print(event.panelId);
@@ -73,7 +77,12 @@ void HeatMapMode::update(Adafruit_NeoPixel& strip) {
   bool anyVisible = false;
 
   for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
-    if (!_touchStates[p].isTouched) {
+    if (_touchStates[p].isTouched) {
+      float tTouchMs = (float)(now - _touchStates[p].lastTouch);
+      float springHold = massSpringResponse(tTouchMs, _touchStates[p].pressure);
+      _touchStates[p].heat += holdHeatRate * (1.0f + 0.35f * springHold) * dt_s;
+      if (_touchStates[p].heat > 1.0f) _touchStates[p].heat = 1.0f;
+    } else {
       _touchStates[p].heat -= coolRate * dt_s;
       if (_touchStates[p].heat < 0.0f) _touchStates[p].heat = 0.0f;
     }
@@ -158,11 +167,11 @@ void HeatMapMode::renderFrame(Adafruit_NeoPixel& strip) {
 
 // ── Colour palette ────────────────────────────────────────────
 //
-// Thermal ramp:  green → yellow → orange → red
+// Thermal ramp:  blue → cyan → amber → red
 //
-//   heat 0.00 → R=  0, G=220, B=  0  (cool green)
-//   heat 0.33 → R=220, G=220, B=  0  (yellow)
-//   heat 0.66 → R=255, G= 80, B=  0  (orange)
+//   heat 0.00 → R=  0, G= 20, B=220  (cool blue)
+//   heat 0.33 → R=  0, G=200, B=255  (cyan)
+//   heat 0.66 → R=255, G=140, B=  0  (amber)
 //   heat 1.00 → R=255, G=  0, B=  0  (hot red)
 //
 // brightness scales all channels proportionally [0..255].
@@ -175,22 +184,22 @@ uint32_t HeatMapMode::heatColor(Adafruit_NeoPixel& strip,
   float r, g, b;
 
   if (heat < 0.33f) {
-    // Green → Yellow
+    // Blue -> Cyan
     float t = heat / 0.33f;
-    r = 220.0f * t;
-    g = 220.0f;
-    b = 0.0f;
+    r = 0.0f;
+    g = 20.0f + 180.0f * t;
+    b = 220.0f + 35.0f * t;
   } else if (heat < 0.66f) {
-    // Yellow → Orange
+    // Cyan -> Amber
     float t = (heat - 0.33f) / 0.33f;
-    r = 220.0f + 35.0f * t;
-    g = 220.0f - 140.0f * t;
-    b = 0.0f;
+    r = 255.0f * t;
+    g = 200.0f - 60.0f * t;
+    b = 255.0f - 255.0f * t;
   } else {
-    // Orange → Red
+    // Amber -> Red
     float t = (heat - 0.66f) / 0.34f;
     r = 255.0f;
-    g = 80.0f - 80.0f * t;
+    g = 140.0f - 140.0f * t;
     b = 0.0f;
   }
 

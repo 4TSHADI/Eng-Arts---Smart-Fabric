@@ -21,6 +21,7 @@ void SimpleDecayMode::enter(Adafruit_NeoPixel& strip) {
     _touchStates[p].active    = false;
     _touchStates[p].startTime = 0;
     _touchStates[p].I0_actual = 0.0f;
+    _touchStates[p].pressure  = 0;
   }
 
   Serial.println("[SimpleDecay] Entered – touch coordinates trigger compact regions.");
@@ -33,7 +34,8 @@ void SimpleDecayMode::onTouch(Adafruit_NeoPixel& strip,
   uint16_t touchPoint = touchPointIndex(event.panelId, event.xCell, event.yCell);
 
   if (event.isTouched) {
-    _touchStates[touchPoint].I0_actual = constrain(map(event.pressure, 0, 150, 80, 255), 80, 255);
+    _touchStates[touchPoint].I0_actual = constrain(map(event.pressure, 0, 255, 80, 255), 80, 255);
+    _touchStates[touchPoint].pressure  = event.pressure;
     _touchStates[touchPoint].startTime = millis();
     _touchStates[touchPoint].active    = true;
 
@@ -76,8 +78,12 @@ void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
     }
 
     PinRegion region = getTouchRegion(touchPointPanel(p), touchPointX(p), touchPointY(p));
-    const float spreadX = region.sigmaX * 1.25f;
-    const float spreadY = region.sigmaY * 1.25f;
+    // Pressure controls circle size: low pressure = tighter glow,
+    // high pressure = larger glow footprint.
+    float pressureNorm = constrain((float)_touchStates[p].pressure / 255.0f, 0.0f, 1.0f);
+    float radiusScale = 0.25f + 1.35f * pressureNorm;
+    const float spreadX = region.sigmaX * 1.25f * radiusScale;
+    const float spreadY = region.sigmaY * 1.25f * radiusScale;
 
     int xMin = max(0, (int)(region.cx - 4.0f * spreadX));
     int xMax = min((int)WIDTH  - 1, (int)(region.cx + 4.0f * spreadX));
@@ -122,5 +128,8 @@ void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
 
 float SimpleDecayMode::computeIntensity(const TouchDecayState& state, float t_ms) {
   //  I(t) = I₀ · e^(−t/τ)
-  return state.I0_actual * expf(-t_ms / tau);
+  float baseDecay = state.I0_actual * expf(-t_ms / tau);
+  float spring = massSpringResponse(t_ms, state.pressure);
+  float springGain = 1.0f + 0.70f * spring;
+  return baseDecay * springGain;
 }

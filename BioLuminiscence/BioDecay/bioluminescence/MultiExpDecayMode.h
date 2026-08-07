@@ -12,9 +12,9 @@
 #ifndef MULTI_EXP_DECAY_MODE_H
 #define MULTI_EXP_DECAY_MODE_H
 
-#include "DecayMode.h"
+#include "SimpleDecayMode.h"
 
-class MultiExpDecayMode : public DecayMode {
+class MultiExpDecayMode : public SimpleDecayMode {
 public:
   // ── Parameters (tuneable) ──────────────────────────────────
   float A1;   // Amplitude of fast component  [0-255] default 200
@@ -23,7 +23,9 @@ public:
   float tau2; // Slow time constant  [ms]              default 2000
 
   MultiExpDecayMode()
-    : A1(200.0f), tau1(300.0f), A2(80.0f), tau2(2000.0f) {}
+    : A1(200.0f), tau1(300.0f), A2(80.0f), tau2(2000.0f) {
+      tau = tau1;
+    }
 
   // ── Lifecycle ──────────────────────────────────────────────
   void enter(Adafruit_NeoPixel& strip) override;
@@ -35,12 +37,14 @@ public:
   }
 
 private:
-  bool          _active;
-  unsigned long _startTime;
-  uint16_t      _triggeredPoint;
+  static const uint8_t kBlobCount = 9;
   float         _scale;  // pressure-derived amplitude scale [0.0-1.0]
 
-  float computeIntensity(float t_ms);
+  float computeIntensity(const TouchDecayState& state, float t_ms) override;
+  void renderBlobField(Adafruit_NeoPixel& strip,
+                       uint16_t touchPoint,
+                       const TouchDecayState& state,
+                       float t_ms);
 };
 
 #endif // MULTI_EXP_DECAY_MODE_H

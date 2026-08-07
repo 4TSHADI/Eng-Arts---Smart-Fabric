@@ -18,6 +18,7 @@ struct TouchDecayState {
   bool          active;      // Is a decay running on this touch point?
   unsigned long startTime;   // millis() when it was triggered
   float         I0_actual;   // Peak intensity for this trigger [0-255]
+  int16_t       pressure;    // Touch impulse strength
 };
 
 class SimpleDecayMode : public DecayMode {
@@ -35,12 +36,13 @@ public:
   void update(Adafruit_NeoPixel& strip) override;
   const char* getName() override { return "Simple Decay  I(t)=I0*exp(-t/tau)"; }
 
-private:
+protected:
   TouchDecayState _touchStates[NUM_TOUCH_POINTS];
 
   // Evaluate I(t) for one touch-point decay
-  float computeIntensity(const TouchDecayState& state, float t_ms);
+  virtual float computeIntensity(const TouchDecayState& state, float t_ms);
 
+private:
   // Render all active touch-point glows onto the strip buffer (no show())
   void renderFrame(Adafruit_NeoPixel& strip);
 };

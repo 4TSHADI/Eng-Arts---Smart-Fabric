@@ -31,9 +31,27 @@
 #define NUM_TOUCH_CELLS      (TOUCH_GRID_SIZE * TOUCH_GRID_SIZE)
 #define NUM_TOUCH_POINTS     (NUM_PANELS * NUM_TOUCH_CELLS)
 #define TOUCH_REGION_SIZE    2
+#define DISABLED_ELECTRODE   255
 
 static constexpr uint8_t X_SENSOR_CHANNELS[NUM_PANELS] = {0, 2};
 static constexpr uint8_t Y_SENSOR_CHANNELS[NUM_PANELS] = {1, 3};
+
+// Per-sensor electrode-to-cell mapping (up to 8 active electrodes per MPR121).
+// Cell index is the position in each row below (0..7).
+// Use DISABLED_ELECTRODE (255) to switch an electrode off completely.
+// Requested layout:
+//   MPR0: 4,3,2,1,0,11,10,9
+//   MPR1: 3,2,1,0,11,10,9,8
+//   MPR2: 1,2,3,4,5,6,7,8
+//   MPR3: 1,2,3,4,5,6,7,8   (interpreting user's "mpr4" as the 4th sensor)
+static constexpr uint8_t SENSOR_ELECTRODE_MAP[NUM_MUX_CHANNELS][ELECTRODES_PER_SENSOR] = {
+  // {3, 2, 1, 0, 11, 10, 9, 8},
+  // {9, 10, 11, 0, 1, 2, 3, 4},
+  {1, 2, 3, 4, 5, 6, 7, 8},
+  {1, 2, 3, 4, 5, 6, 7, 8},
+  {1, 2, 3, 4, 5, 6, 7, 8},
+  {1, 2, 3, 4, 5, 6, 7, 8}
+};
 
 // ── WiFi configuration ──────────────────────────────────────
 #ifndef WIFI_SSID
