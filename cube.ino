@@ -11,12 +11,13 @@
 #define DATA_PIN       6
 #define NEOPIXEL_TYPE  (NEO_GRB + NEO_KHZ800)
 
-#define TCA_ADDR_A     0x70   // host mpr1-8, channels 0-7
-#define TCA_ADDR_B     0x71   // host mpr9-12, channels 0-3
+#define TCA_ADDR_A     0x70
+#define TCA_ADDR_B     0x71
 
 #define MPR121_ADDR    0x5A
 
-#define NUM_ELECTRODES_PER_AXIS 12
+#define NUM_ELECTRODES_PER_AXIS 8
+const uint8_t ELECTRODE_PINS[NUM_ELECTRODES_PER_AXIS] = {0, 1, 2, 3, 4, 5, 6, 11};
 
 #define TOUCH_THRESH   16
 #define RELEASE_THRESH 8
@@ -33,15 +34,24 @@
 #define EDGE_MARGIN     2.0f
 #define BLEED_STRENGTH  0.4f
 
-#define MAX_TOUCHES 2   
+#define MAX_TOUCHES 2
 
-// face: 0=Bottom 1=Left 2=Front 3=Right 4=Back 5=Top
+#define HEAT_PER_TOUCH   5.0f
+#define HEAT_SATURATION  120.0f
+
+// ---------------- MPR121 批量读取寄存器地址 ----------------
+#define MPR121_REG_FILTDATA0L 0x04
+#define MPR121_REG_BASELINE0  0x1E
+#define MPR121_NUM_CHANNELS   13
+
+// face编号: 0=Bottom 1=Left 2=Front 3=Right 4=Back 5=Top
 
 Adafruit_NeoPixel strip(NUM_LEDS_TOTAL, DATA_PIN, NEOPIXEL_TYPE);
 Adafruit_MPR121 mpr[12];
 bool mprReady[12];
 
 float brightness[NUM_FACES][FACE_SIZE][FACE_SIZE];
+float heatCount[NUM_FACES][FACE_SIZE][FACE_SIZE];
 
 struct TouchTrack {
   bool active;
@@ -50,26 +60,11 @@ struct TouchTrack {
 };
 TouchTrack tracks[NUM_FACES][MAX_TOUCHES];
 
-uint8_t chipMuxAddr[12]    = { TCA_ADDR_A, TCA_ADDR_A, TCA_ADDR_A, TCA_ADDR_A,
-                                TCA_ADDR_A, TCA_ADDR_A, TCA_ADDR_A, TCA_ADDR_A,
-                                TCA_ADDR_B, TCA_ADDR_B, TCA_ADDR_B, TCA_ADDR_B };
-uint8_t chipMuxChannel[12] = { 0, 1, 2, 3, 4, 5, 6, 7,   0, 1, 2, 3 };
+uint8_t chipMuxAddr[12];
+uint8_t chipMuxChannel[12];
 
-// ---------------- electrode ----------------
-struct ElectrodeSource {
-  uint8_t chip;
-  uint8_t offset;
-};
-
-// [face][0]=frontCol [face][1]=backCol [face][2]=frontRow [face][3]=backRow
-ElectrodeSource elecSrc[NUM_FACES][4] = {
-  { {0,6}, {2,6}, {1,6}, {3,6} },   // face0 Bottom
-  { {0,0}, {8,0}, {7,6}, {4,0} },   // face1 Left
-  { {1,0}, {9,0}, {4,6}, {5,0} },   // face2 Front
-  { {2,0}, {10,0}, {5,6}, {6,0} },  // face3 Right
-  { {3,0}, {11,0}, {6,6}, {7,0} },  // face4 Back
-  { {8,6}, {10,6}, {9,6}, {11,6} }  // face5 Top
-};
+#define colChip(face) ((face) * 2)
+#define rowChip(face) ((face) * 2 + 1)
 
 struct EdgeLink {
   int8_t neighborFace;
@@ -86,9 +81,8 @@ EdgeLink edgeMap[6][4] = {
   { {4,0,false}, {1,0,false}, {2,0,false}, {3,0,true} }
 };
 
-float chipStrength[12][12];
+float chipStrength[12][NUM_ELECTRODES_PER_AXIS];
 
-// ---------------- mux channel ----------------
 void tcaSelect(uint8_t muxAddr, uint8_t channel) {
   if (channel > 7) return;
   Wire.beginTransmission(muxAddr);
@@ -96,7 +90,6 @@ void tcaSelect(uint8_t muxAddr, uint8_t channel) {
   Wire.endTransmission();
 }
 
-// ---------------- LED mapping ----------------
 uint16_t faceXY(uint8_t x, uint8_t y) {
   if (y % 2 == 0) {
     return y * FACE_SIZE + (FACE_SIZE - 1 - x);
@@ -109,6 +102,40 @@ uint16_t globalXY(uint8_t face, uint8_t x, uint8_t y) {
   return face * PIXELS_PER_FACE + faceXY(x, y);
 }
 
+uint16_t heatToHue(float heat) {
+  float t = heat / HEAT_SATURATION;
+  if (t > 1.0f) t = 1.0f;
+  return (uint16_t)(43690.0f * (1.0f - t));
+}
+
+inline float clampBrightness(float v) {
+  return v > 255.0f ? 255.0f : v;
+}
+
+// ---------------- 批量读取某颗芯片全部13个电极的filtered/baseline ----------------
+bool mprBulkRead(uint8_t i2cAddr, uint16_t* filtered, uint16_t* baseline) {
+  Wire.beginTransmission(i2cAddr);
+  Wire.write(MPR121_REG_FILTDATA0L);
+  if (Wire.endTransmission(false) != 0) return false;
+  uint8_t n = Wire.requestFrom((int)i2cAddr, 26);
+  if (n < 26) return false;
+  for (uint8_t i = 0; i < MPR121_NUM_CHANNELS; i++) {
+    uint8_t lo = Wire.read();
+    uint8_t hi = Wire.read();
+    filtered[i] = (uint16_t)lo | ((uint16_t)hi << 8);
+  }
+
+  Wire.beginTransmission(i2cAddr);
+  Wire.write(MPR121_REG_BASELINE0);
+  if (Wire.endTransmission(false) != 0) return false;
+  n = Wire.requestFrom((int)i2cAddr, MPR121_NUM_CHANNELS);
+  if (n < MPR121_NUM_CHANNELS) return false;
+  for (uint8_t i = 0; i < MPR121_NUM_CHANNELS; i++) {
+    baseline[i] = ((uint16_t)Wire.read()) << 2;
+  }
+  return true;
+}
+
 void setup() {
   Serial.begin(9600);
   uint32_t t0 = millis();
@@ -116,17 +143,27 @@ void setup() {
 
   Wire.begin();
 
-  Serial.println("Initializing 12 MPR121 chips via two TCA9548A muxes...");
+  for (uint8_t c = 0; c < 12; c++) {
+    if (c < 8) {
+      chipMuxAddr[c] = TCA_ADDR_A;
+      chipMuxChannel[c] = c;
+    } else {
+      chipMuxAddr[c] = TCA_ADDR_B;
+      chipMuxChannel[c] = c - 8;
+    }
+  }
+
+  Serial.println("Initializing 12 MPR121 chips (2 per face) via two TCA9548A muxes...");
 
   for (uint8_t c = 0; c < 12; c++) {
     tcaSelect(chipMuxAddr[c], chipMuxChannel[c]);
     if (mpr[c].begin(MPR121_ADDR, &Wire)) {
       mpr[c].setAutoconfig(true);
       mpr[c].setThresholds(TOUCH_THRESH, RELEASE_THRESH);
-      Serial.print("MPR"); Serial.print(c + 1); Serial.println(": found.");
+      Serial.print("Chip "); Serial.print(c); Serial.println(": found.");
       mprReady[c] = true;
     } else {
-      Serial.print("MPR"); Serial.print(c + 1); Serial.println(": NOT found.");
+      Serial.print("Chip "); Serial.print(c); Serial.println(": NOT found.");
       mprReady[c] = false;
     }
   }
@@ -137,26 +174,27 @@ void setup() {
   strip.show();
 
   memset(brightness, 0, sizeof(brightness));
+  memset(heatCount, 0, sizeof(heatCount));
   for (int f = 0; f < NUM_FACES; f++)
     for (int t = 0; t < MAX_TOUCHES; t++)
       tracks[f][t].active = false;
 
-  Serial.println("Cube multi-touch (up to 2 per face) light trail ready.");
+  Serial.println("Cube (6 faces, 8x8 electrodes each) heatmap + multi-touch ready.");
 }
 
 void refreshChipStrengths() {
+  uint16_t filtered[MPR121_NUM_CHANNELS];
+  uint16_t baseline[MPR121_NUM_CHANNELS];
+
   for (uint8_t c = 0; c < 12; c++) {
     if (!mprReady[c]) continue;
     tcaSelect(chipMuxAddr[c], chipMuxChannel[c]);
-    for (uint8_t p = 0; p < 12; p++) {
-      chipStrength[c][p] = (float)mpr[c].baselineData(p) - (float)mpr[c].filteredData(p);
+    if (!mprBulkRead(MPR121_ADDR, filtered, baseline)) continue;
+    for (uint8_t p = 0; p < NUM_ELECTRODES_PER_AXIS; p++) {
+      uint8_t pin = ELECTRODE_PINS[p];
+      chipStrength[c][p] = (float)baseline[pin] - (float)filtered[pin];
     }
   }
-}
-
-void buildAxisStrength(ElectrodeSource front, ElectrodeSource back, float* out) {
-  for (int e = 0; e < 6; e++) out[e] = chipStrength[front.chip][front.offset + e];
-  for (int e = 0; e < 6; e++) out[e + 6] = chipStrength[back.chip][back.offset + e];
 }
 
 struct Cluster {
@@ -186,23 +224,15 @@ int findClusters(float* strengths, int numElectrodes, Cluster* outClusters) {
 }
 
 int detectTouches(uint8_t face, float* outRows, float* outCols) {
-  ElectrodeSource frontCol = elecSrc[face][0];
-  ElectrodeSource backCol  = elecSrc[face][1];
-  ElectrodeSource frontRow = elecSrc[face][2];
-  ElectrodeSource backRow  = elecSrc[face][3];
+  uint8_t cc = colChip(face);
+  uint8_t rc = rowChip(face);
 
-  if (!mprReady[frontCol.chip] || !mprReady[backCol.chip] ||
-      !mprReady[frontRow.chip] || !mprReady[backRow.chip]) return 0;
-
-  float colStrength[NUM_ELECTRODES_PER_AXIS];
-  float rowStrength[NUM_ELECTRODES_PER_AXIS];
-  buildAxisStrength(frontCol, backCol, colStrength);
-  buildAxisStrength(frontRow, backRow, rowStrength);
+  if (!mprReady[cc] || !mprReady[rc]) return 0;
 
   Cluster colClusters[MAX_TOUCHES];
   Cluster rowClusters[MAX_TOUCHES];
-  int numColClusters = findClusters(colStrength, NUM_ELECTRODES_PER_AXIS, colClusters);
-  int numRowClusters = findClusters(rowStrength, NUM_ELECTRODES_PER_AXIS, rowClusters);
+  int numColClusters = findClusters(chipStrength[cc], NUM_ELECTRODES_PER_AXIS, colClusters);
+  int numRowClusters = findClusters(chipStrength[rc], NUM_ELECTRODES_PER_AXIS, rowClusters);
 
   int numTouches = min(numColClusters, numRowClusters);
 
@@ -253,10 +283,15 @@ void depositBilinear(uint8_t face, float ledRow, float ledCol) {
   brightness[face][y1][x0] += DEPOSIT_GAIN * w10;
   brightness[face][y1][x1] += DEPOSIT_GAIN * w11;
 
-  brightness[face][y0][x0] = min(255.0f, brightness[face][y0][x0]);
-  brightness[face][y0][x1] = min(255.0f, brightness[face][y0][x1]);
-  brightness[face][y1][x0] = min(255.0f, brightness[face][y1][x0]);
-  brightness[face][y1][x1] = min(255.0f, brightness[face][y1][x1]);
+  brightness[face][y0][x0] = clampBrightness(brightness[face][y0][x0]);
+  brightness[face][y0][x1] = clampBrightness(brightness[face][y0][x1]);
+  brightness[face][y1][x0] = clampBrightness(brightness[face][y1][x0]);
+  brightness[face][y1][x1] = clampBrightness(brightness[face][y1][x1]);
+
+  heatCount[face][y0][x0] += HEAT_PER_TOUCH * w00;
+  heatCount[face][y0][x1] += HEAT_PER_TOUCH * w01;
+  heatCount[face][y1][x0] += HEAT_PER_TOUCH * w10;
+  heatCount[face][y1][x1] += HEAT_PER_TOUCH * w11;
 }
 
 void depositEdgeBleed(uint8_t neighborFace, uint8_t neighborEdge, float alongEdge, float depthFromEdge, float strength) {
@@ -270,7 +305,7 @@ void depositEdgeBleed(uint8_t neighborFace, uint8_t neighborEdge, float alongEdg
   int r = (int)nRow, c = (int)nCol;
   if (r < 0 || r >= FACE_SIZE || c < 0 || c >= FACE_SIZE) return;
   brightness[neighborFace][r][c] += DEPOSIT_GAIN * strength;
-  if (brightness[neighborFace][r][c] > 255.0f) brightness[neighborFace][r][c] = 255.0f;
+  brightness[neighborFace][r][c] = clampBrightness(brightness[neighborFace][r][c]);
 }
 
 void bleedAcrossEdges(uint8_t face, float ledRow, float ledCol) {
@@ -303,7 +338,8 @@ void renderAllFaces() {
       for (int x = 0; x < FACE_SIZE; x++) {
         uint8_t b = (uint8_t)brightness[f][y][x];
         if (b > 0) {
-          uint32_t color = strip.gamma32(strip.ColorHSV(29000, 200, b));
+          uint16_t hue = heatToHue(heatCount[f][y][x]);
+          uint32_t color = strip.gamma32(strip.ColorHSV(hue, 200, b));
           strip.setPixelColor(globalXY(f, x, y), color);
         }
       }
