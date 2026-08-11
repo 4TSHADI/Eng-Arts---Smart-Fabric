@@ -1,11 +1,11 @@
 // ============================================================
-// SpreadDecayMode.h
+// SpreadLightingMode.h
 // Fourth mode: particle-based diffusion from the touched region.
 // ============================================================
-#ifndef SPREAD_DECAY_MODE_H
-#define SPREAD_DECAY_MODE_H
+#ifndef SPREAD_LIGHTING_MODE_H
+#define SPREAD_LIGHTING_MODE_H
 
-#include "DecayMode.h"
+#include "LightingMode.h"
 
 struct SpreadParticle {
   float x;
@@ -21,13 +21,13 @@ struct SpreadParticle {
   bool active;
 };
 
-class SpreadDecayMode : public DecayMode {
+class SpreadLightingMode : public LightingMode {
 public:
-  SpreadDecayMode();
+  SpreadLightingMode();
 
   void enter(Adafruit_NeoPixel& strip) override;
   void onTouch(Adafruit_NeoPixel& strip,
-               uint8_t pin, bool isTouched, int16_t pressure) override;
+               const TouchEvent& event) override;
   void update(Adafruit_NeoPixel& strip) override;
   const char* getName() override { return "Spread Diffusion"; }
 
@@ -49,4 +49,4 @@ private:
   float calculateFireflyBrightness(uint16_t life, uint16_t maxLife, float peak);
 };
 
-#endif // SPREAD_DECAY_MODE_H
+#endif // SPREAD_LIGHTING_MODE_H

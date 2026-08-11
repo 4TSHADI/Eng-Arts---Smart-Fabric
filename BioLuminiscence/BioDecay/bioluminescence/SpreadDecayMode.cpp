@@ -1,11 +1,11 @@
-#include "SpreadDecayMode.h"
+#include "SpreadLightingMode.h"
 
-SpreadDecayMode::SpreadDecayMode()
+SpreadLightingMode::SpreadLightingMode()
   : _noiseFrame(0), _active(false) {
   resetState();
 }
 
-void SpreadDecayMode::resetState() {
+void SpreadLightingMode::resetState() {
   for (uint8_t i = 0; i < kParticleCount; i++) {
     _particles[i].active = false;
     _particles[i].life = 0;
@@ -14,40 +14,45 @@ void SpreadDecayMode::resetState() {
   }
 }
 
-void SpreadDecayMode::enter(Adafruit_NeoPixel& strip) {
-  strip.setBrightness(50);
+void SpreadLightingMode::enter(Adafruit_NeoPixel& strip) {
+  strip.setBrightness(90);
   strip.clear();
   strip.show();
   resetState();
   _active = false;
   _noiseFrame = 0;
 
-  Serial.println("[SpreadDecay] Entered – Firefly mode.");
+  if (MODE_EVENT_SERIAL_LOG) {
+    Serial.println("[SpreadLighting] Entered – Firefly mode.");
+  }
 }
 
-void SpreadDecayMode::trail(Adafruit_NeoPixel& strip) {
+void SpreadLightingMode::trail(Adafruit_NeoPixel& strip) {
   for (uint16_t i = 0; i < NUM_LEDS; i++) {
     uint32_t c = strip.getPixelColor(i);
     uint8_t r = (c >> 16) & 0xFF;
     uint8_t g = (c >> 8) & 0xFF;
     uint8_t b = c & 0xFF;
 
-    r = (uint8_t)((r * 210) / 255);
-    g = (uint8_t)((g * 210) / 255);
-    b = (uint8_t)((b * 210) / 255);
+    r = (uint8_t)((r * 225) / 255);
+    g = (uint8_t)((g * 225) / 255);
+    b = (uint8_t)((b * 225) / 255);
 
     strip.setPixelColor(i, strip.Color(r, g, b));
   }
 }
 
-void SpreadDecayMode::spawnFrom(float x, float y, int16_t pressure) {
-  const uint8_t fireflyR = 210;
-  const uint8_t fireflyG = 255;
-  const uint8_t fireflyB = 20;
+void SpreadLightingMode::spawnFrom(float x, float y, int16_t pressure) {
+  const uint8_t fireflyR = 255;
+  const uint8_t fireflyG = 70;
+  const uint8_t fireflyB = 235;
+  float springKick = massSpringResponse(120.0f, pressure);
+  float speedGain = 1.0f + 0.45f * springKick;
+  float lifeGain = 1.0f + 0.35f * springKick;
 
   for (uint8_t i = 0; i < kParticleCount; i++) {
     float angle = random(0, 360) * PI / 180.0f;
-    float speed = random(15, 60) / 100.0f;
+    float speed = (random(15, 60) / 100.0f) * speedGain;
 
     _particles[i].x = x;
     _particles[i].y = y;
@@ -57,39 +62,44 @@ void SpreadDecayMode::spawnFrom(float x, float y, int16_t pressure) {
     _particles[i].g = fireflyG;
     _particles[i].b = fireflyB;
     _particles[i].life = 0;
-    _particles[i].maxLife = random(30, 70);
-    _particles[i].peakBrightness = 0.4f + (pressure / 150.0f) * 0.6f;
+    _particles[i].maxLife = (uint16_t)(random(30, 70) * lifeGain);
+    _particles[i].peakBrightness = constrain(0.45f + (pressure / 255.0f) * 0.60f + 0.55f * springKick,
+                                             0.0f,
+                         1.65f);
     _particles[i].active = true;
   }
 
   _active = true;
 }
 
-void SpreadDecayMode::onTouch(Adafruit_NeoPixel& strip,
-                              uint8_t pin, bool isTouched, int16_t pressure) {
-  if (!isTouched || pin >= NUM_PINS) return;
+void SpreadLightingMode::onTouch(Adafruit_NeoPixel& strip,
+                                 const TouchEvent& event) {
+  if (!event.isTouched) return;
+  if (event.xCell >= TOUCH_GRID_SIZE || event.yCell >= TOUCH_GRID_SIZE) return;
 
-  const PinRegion& region = PIN_REGIONS[pin];
-  spawnFrom(region.cx, region.cy, pressure);
+  PinSection section = getTouchRegionBounds(event.panelId, event.xCell, event.yCell);
+  float spawnX = (float)section.xStart;
+  float spawnY = (float)section.yStart;
+  spawnFrom(spawnX, spawnY, event.pressure);
 }
 
-float SpreadDecayMode::fade(float t) {
+float SpreadLightingMode::fade(float t) {
   return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 }
 
-float SpreadDecayMode::lerp(float a, float b, float t) {
+float SpreadLightingMode::lerp(float a, float b, float t) {
   return a + t * (b - a);
 }
 
-float SpreadDecayMode::fract(float x) {
+float SpreadLightingMode::fract(float x) {
   return x - floor(x);
 }
 
-float SpreadDecayMode::hash2D(float x, float y) {
+float SpreadLightingMode::hash2D(float x, float y) {
   return fract(sinf(x * 12.9898f + y * 78.233f) * 43758.5453f);
 }
 
-float SpreadDecayMode::perlinNoise2D(float x, float y) {
+float SpreadLightingMode::perlinNoise2D(float x, float y) {
   int x0 = floor(x);
   int y0 = floor(y);
   float xf = x - x0;
@@ -108,7 +118,7 @@ float SpreadDecayMode::perlinNoise2D(float x, float y) {
   return lerp(x1, x2, v) * 2.0f - 1.0f;
 }
 
-float SpreadDecayMode::calculateFireflyBrightness(uint16_t life, uint16_t maxLife, float peak) {
+float SpreadLightingMode::calculateFireflyBrightness(uint16_t life, uint16_t maxLife, float peak) {
   if (maxLife == 0) return 0.0f;
 
   float t = (float)life / (float)maxLife;
@@ -119,15 +129,15 @@ float SpreadDecayMode::calculateFireflyBrightness(uint16_t life, uint16_t maxLif
     float normRise = t / tPeak;
     intensity = normRise * normRise * (3.0f - 2.0f * normRise);
   } else {
-    float normDecay = (t - tPeak) / (1.0f - tPeak);
-    float remaining = 1.0f - normDecay;
+    float normFade = (t - tPeak) / (1.0f - tPeak);
+    float remaining = 1.0f - normFade;
     intensity = remaining * remaining * remaining;
   }
 
   return intensity * peak;
 }
 
-void SpreadDecayMode::update(Adafruit_NeoPixel& strip) {
+void SpreadLightingMode::update(Adafruit_NeoPixel& strip) {
   if (!_active) return;
 
   trail(strip);
@@ -163,9 +173,9 @@ void SpreadDecayMode::update(Adafruit_NeoPixel& strip) {
                                                         _particles[i].peakBrightness);
 
     if (brightnessFactor > 0.001f) {
-      uint8_t r = (uint8_t)((_particles[i].r * brightnessFactor));
-      uint8_t g = (uint8_t)((_particles[i].g * brightnessFactor * 1.05f));
-      uint8_t b = (uint8_t)((_particles[i].b * brightnessFactor * 0.35f));
+      uint8_t r = (uint8_t)constrain(_particles[i].r * brightnessFactor * 1.10f, 0.0f, 255.0f);
+      uint8_t g = (uint8_t)constrain(_particles[i].g * brightnessFactor * 0.55f, 0.0f, 255.0f);
+      uint8_t b = (uint8_t)constrain(_particles[i].b * brightnessFactor * 1.25f, 0.0f, 255.0f);
 
       strip.setPixelColor(XY((uint8_t)xx, (uint8_t)yy), strip.Color(r, g, b));
     } else {
