@@ -1,6 +1,6 @@
 // ============================================================
 // ProjectConfig.h
-// Shared hardware constants and math helpers for BioDecay.
+// Shared hardware constants and math helpers for BioLighting.
 //
 // Hardware:
 //   - 4× MPR121 behind a TCA9548A mux
@@ -23,9 +23,19 @@
 #define NUM_MUX_CHANNELS     4
 #define ELECTRODES_PER_MPR   12
 
-// Four MPR121 sensors are arranged as two X/Y pairs:
-// panel 0 -> channels 0 (X), 1 (Y)
-// panel 1 -> channels 2 (X), 3 (Y)
+// Touch sensitivity thresholds (lower values are more sensitive)
+// Default: Touch = 12, Release = 6. Previous: Touch = 8, Release = 4.
+#define MPR121_TOUCH_THRESHOLD    5
+#define MPR121_RELEASE_THRESHOLD  2
+
+// Runtime feature toggles
+#define ENABLE_WIFI_CONTROL        0
+#define SENSOR_STARTUP_DEEP_SCAN   0
+#define TOUCH_EVENT_SERIAL_LOG     1
+#define MODE_EVENT_SERIAL_LOG      0
+#define SERIAL_WAIT_TIMEOUT_MS     2000
+
+
 #define TOUCH_GRID_SIZE      8
 #define ELECTRODES_PER_SENSOR TOUCH_GRID_SIZE
 #define NUM_TOUCH_CELLS      (TOUCH_GRID_SIZE * TOUCH_GRID_SIZE)
@@ -39,18 +49,13 @@ static constexpr uint8_t Y_SENSOR_CHANNELS[NUM_PANELS] = {1, 3};
 // Per-sensor electrode-to-cell mapping (up to 8 active electrodes per MPR121).
 // Cell index is the position in each row below (0..7).
 // Use DISABLED_ELECTRODE (255) to switch an electrode off completely.
-// Requested layout:
-//   MPR0: 4,3,2,1,0,11,10,9
-//   MPR1: 3,2,1,0,11,10,9,8
-//   MPR2: 1,2,3,4,5,6,7,8
-//   MPR3: 1,2,3,4,5,6,7,8   (interpreting user's "mpr4" as the 4th sensor)
 static constexpr uint8_t SENSOR_ELECTRODE_MAP[NUM_MUX_CHANNELS][ELECTRODES_PER_SENSOR] = {
-  // {3, 2, 1, 0, 11, 10, 9, 8},
-  // {9, 10, 11, 0, 1, 2, 3, 4},
-  {1, 2, 3, 4, 5, 6, 7, 8},
-  {1, 2, 3, 4, 5, 6, 7, 8},
-  {1, 2, 3, 4, 5, 6, 7, 8},
-  {1, 2, 3, 4, 5, 6, 7, 8}
+  {11, 0, 1, 2, 3, 4, 5, 6},
+  {6, 5, 4, 3, 2, 1, 0, 11},
+  // {6, 5, 4, 3, 2, 1, 0, 11},
+  {11, 0, 1, 2, 3, 4, 5, 6},
+  // {6, 5, 4, 3, 2, 1, 0, 11},
+  {11, 0, 1, 2, 3, 4, 5, 6}
 };
 
 // ── WiFi configuration ──────────────────────────────────────
@@ -66,15 +71,23 @@ static constexpr uint8_t SENSOR_ELECTRODE_MAP[NUM_MUX_CHANNELS][ELECTRODES_PER_S
 
 // ── LED matrix ───────────────────────────────────────────────
 // Two 16×16 NeoPixel panels chained → addressed as a single 16×32 grid.
-const uint8_t  WIDTH     = 16;
-const uint8_t  HEIGHT    = 32;
+const uint8_t  WIDTH     = 32;
+const uint8_t  HEIGHT    = 16;
 const uint16_t NUM_LEDS  = WIDTH * HEIGHT;
 
 // ── Serpentine layout ────────────────────────────────────────
 inline uint16_t XY(uint8_t x, uint8_t y) {
   if (x >= WIDTH || y >= HEIGHT) return NUM_LEDS;
-  return (y & 1) ? (y * WIDTH + (WIDTH - 1 - x))
-                : (y * WIDTH + x);
+  if (x < 16) {
+    // Panel 0 (left) - first 256 LEDs
+    return (y & 1) ? (y * 16 + (15 - x))
+                   : (y * 16 + x);
+  } else {
+    // Panel 1 (right) - second 256 LEDs
+    uint8_t localX = x - 16;
+    return 256 + ((y & 1) ? (y * 16 + (15 - localX))
+                          : (y * 16 + localX));
+  }
 }
 
 // ── Section lookup structs ────────────────────────────────────
@@ -116,9 +129,9 @@ inline PinSection getTouchRegionBounds(uint8_t panelId, uint8_t xCell, uint8_t y
   if (xCell >= TOUCH_GRID_SIZE) xCell = TOUCH_GRID_SIZE - 1;
   if (yCell >= TOUCH_GRID_SIZE) yCell = TOUCH_GRID_SIZE - 1;
 
-  uint8_t x0 = min((uint8_t)(xCell * TOUCH_REGION_SIZE), (uint8_t)(WIDTH - TOUCH_REGION_SIZE));
-  uint8_t yBase = (uint8_t)(panelId * 16);
-  uint8_t y0 = min((uint8_t)(yBase + yCell * TOUCH_REGION_SIZE), (uint8_t)(HEIGHT - TOUCH_REGION_SIZE));
+  uint8_t xBase = (uint8_t)(panelId * 16);
+  uint8_t x0 = min((uint8_t)(xBase + xCell * TOUCH_REGION_SIZE), (uint8_t)(WIDTH - TOUCH_REGION_SIZE));
+  uint8_t y0 = min((uint8_t)(yCell * TOUCH_REGION_SIZE), (uint8_t)(HEIGHT - TOUCH_REGION_SIZE));
 
   PinSection s;
   s.xStart = x0;
@@ -130,8 +143,8 @@ inline PinSection getTouchRegionBounds(uint8_t panelId, uint8_t xCell, uint8_t y
 
 inline PinRegion getTouchRegion(uint8_t panelId, uint8_t xCell, uint8_t yCell) {
   PinSection s = getTouchRegionBounds(panelId, xCell, yCell);
-  float w = (float)(s.xEnd - s.xStart + 1);  // always 3.0
-  float h = (float)(s.yEnd - s.yStart + 1);  // always 3.0
+  float w = (float)(s.xEnd - s.xStart + 1);  // usually 2.0 with TOUCH_REGION_SIZE=2
+  float h = (float)(s.yEnd - s.yStart + 1);  // usually 2.0 with TOUCH_REGION_SIZE=2
   PinRegion r;
   r.cx     = s.xStart + (w - 1.0f) * 0.5f;
   r.cy     = s.yStart + (h - 1.0f) * 0.5f;

@@ -1,18 +1,18 @@
 #ifndef MODE_CONTROLLER_H
 #define MODE_CONTROLLER_H
 
-#include "DecayMode.h"
+#include "LightingMode.h"
 
 struct ModeRegistration {
   const char* name;
-  DecayMode* mode;
+  LightingMode* mode;
 };
 
 class ModeController {
 public:
   ModeController() : _count(0), _activeIndex(0) {}
 
-  bool registerMode(const char* name, DecayMode* mode) {
+  bool registerMode(const char* name, LightingMode* mode) {
     if (_count >= MAX_MODES || mode == nullptr || name == nullptr) {
       return false;
     }
@@ -84,7 +84,7 @@ public:
     }
   }
 
-  DecayMode* activeMode() {
+  LightingMode* activeMode() {
     if (_count == 0) return nullptr;
     return _modes[_activeIndex].mode;
   }

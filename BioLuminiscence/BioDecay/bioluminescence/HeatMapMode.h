@@ -4,7 +4,7 @@
 //
 // Each touch point stores a persistent "heat" level in [0.0, 1.0].
 //   • Every touch INCREASES the heat for that cell (accumulates).
-//   • When not being touched, heat DECAYS slowly toward 0.
+//   • When not being touched, heat fades slowly toward 0.
 //   • Heat  1.0 → red    (most-touched / hottest)
 //   • Heat  0.5 → cyan / amber transition
 //   • Heat  0.0 → blue   (least-touched / coolest)
@@ -16,7 +16,7 @@
 #ifndef HEAT_MAP_MODE_H
 #define HEAT_MAP_MODE_H
 
-#include "DecayMode.h"
+#include "LightingMode.h"
 
 // ── Per-touch-point heat state ───────────────────────────────
 struct TouchHeatState {
@@ -27,7 +27,7 @@ struct TouchHeatState {
   unsigned long lastTouch;   // millis() of last touch event
 };
 
-class HeatMapMode : public DecayMode {
+class HeatMapMode : public LightingMode {
 public:
   // ── Tuneable parameters ────────────────────────────────────
   // How much heat a single touch adds (per call to onTouch).
@@ -49,10 +49,10 @@ public:
   float flashTau;       // default 400 ms
 
   HeatMapMode()
-    : heatPerTouch(0.18f),
-      holdHeatRate(0.10f),
+    : heatPerTouch(0.30f),
+      holdHeatRate(0.20f),
       coolRate(0.04f),
-      ambientBri(4.0f),
+      ambientBri(10.0f),
       flashTau(400.0f) {}
 
   // ── Lifecycle ──────────────────────────────────────────────

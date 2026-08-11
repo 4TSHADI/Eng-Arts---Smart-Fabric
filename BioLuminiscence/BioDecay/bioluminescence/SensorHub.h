@@ -3,7 +3,7 @@
 
 #include <Wire.h>
 #include "Adafruit_MPR121.h"
-#include "DecayMode.h"
+#include "LightingMode.h"
 
 struct AxisTouch {
   bool valid;
@@ -14,8 +14,10 @@ struct AxisTouch {
 class SensorHub {
 public:
   SensorHub() {
+    _muxAddr = 0;
     for (uint8_t i = 0; i < NUM_MUX_CHANNELS; i++) {
       _sensorReady[i] = false;
+      _sensorAddr[i] = 0;
     }
     for (uint8_t panel = 0; panel < NUM_PANELS; panel++) {
       _wasTouched[panel] = false;
@@ -25,13 +27,28 @@ public:
   }
 
   void begin() {
+#if I2C_FORCE_INTERNAL_PULLUPS
+    pinMode(SDA, INPUT_PULLUP);
+    pinMode(SCL, INPUT_PULLUP);
+#endif
+
     Wire.begin();
+    Wire.setClock(100000);
+    Serial.println("I2C clock set to 100kHz");
+    printI2CLineState();
   }
 
   void initSensors() {
+    printI2CDiagnostics();
+
+    if (_muxAddr == 0) {
+      Serial.println("Sensor init aborted: TCA9548A mux not detected.");
+      return;
+    }
+
     for (uint8_t panel = 0; panel < NUM_PANELS; ++panel) {
-      uint8_t xChannel = X_SENSOR_CHANNELS[panel];
       uint8_t yChannel = Y_SENSOR_CHANNELS[panel];
+      uint8_t xChannel = X_SENSOR_CHANNELS[panel];
 
       char xLabel[20];
       char yLabel[20];
@@ -43,12 +60,12 @@ public:
     }
   }
 
-  void pollTouches(DecayMode* activeMode, Adafruit_NeoPixel& strip) {
+  void pollTouches(LightingMode* activeMode, Adafruit_NeoPixel& strip) {
     if (activeMode == nullptr) return;
 
     for (uint8_t panel = 0; panel < NUM_PANELS; ++panel) {
-      uint8_t xChannel = X_SENSOR_CHANNELS[panel];
       uint8_t yChannel = Y_SENSOR_CHANNELS[panel];
+      uint8_t xChannel = X_SENSOR_CHANNELS[panel];
 
       if (!_sensorReady[xChannel] || !_sensorReady[yChannel]) {
         continue;
@@ -74,14 +91,16 @@ public:
           _lastXCell[panel] = xCell;
           _lastYCell[panel] = yCell;
 
-          Serial.print("Panel ");
-          Serial.print(panel);
-          Serial.print(" touch -> (x=");
-          Serial.print(xCell);
-          Serial.print(", y=");
-          Serial.print(yCell);
-          Serial.print(") pressure=");
-          Serial.println(pressure);
+          if (TOUCH_EVENT_SERIAL_LOG) {
+            Serial.print("Panel ");
+            Serial.print(panel);
+            Serial.print(" touch -> (x=");
+            Serial.print(xCell);
+            Serial.print(", y=");
+            Serial.print(yCell);
+            Serial.print(") pressure=");
+            Serial.println(pressure);
+          }
         }
 
         _wasTouched[panel] = true;
@@ -94,44 +113,186 @@ public:
   }
 
 private:
+  static const uint16_t MUX_SETTLE_US = 150;
+
   Adafruit_MPR121 _sensors[NUM_MUX_CHANNELS];
   bool _sensorReady[NUM_MUX_CHANNELS];
+  uint8_t _sensorAddr[NUM_MUX_CHANNELS];
+  uint8_t _muxAddr;
 
   bool _wasTouched[NUM_PANELS];
   uint8_t _lastXCell[NUM_PANELS];
   uint8_t _lastYCell[NUM_PANELS];
 
-  void tcaSelect(uint8_t channel) {
-    if (channel > 7) return;
+  bool i2cAddressResponds(uint8_t addr) {
+    Wire.beginTransmission(addr);
+    uint8_t err = Wire.endTransmission();
+    return err == 0;
+  }
 
-    Wire.beginTransmission(TCA9548A_ADDR);
+  void printI2CLineState() {
+    int sdaState = digitalRead(SDA);
+    int sclState = digitalRead(SCL);
+
+    Serial.print("I2C line state: SDA=");
+    Serial.print(sdaState == HIGH ? "HIGH" : "LOW");
+    Serial.print(" SCL=");
+    Serial.println(sclState == HIGH ? "HIGH" : "LOW");
+
+    if (sdaState == LOW || sclState == LOW) {
+      Serial.println("  Warning: SDA/SCL low at idle. Check wiring shorts, pullups, and mux RESET.");
+    }
+  }
+
+  void printI2CDiagnostics() {
+    Serial.println("I2C diagnostic scan:");
+
+    Serial.print("  upstream scan: ");
+    bool upstreamFoundAny = false;
+    bool upstreamMprFound = false;
+    for (uint8_t addr = 0x03; addr <= 0x77; ++addr) {
+      if (i2cAddressResponds(addr)) {
+        if (upstreamFoundAny) Serial.print(", ");
+        Serial.print("0x");
+        Serial.print(addr, HEX);
+        upstreamFoundAny = true;
+        if (addr >= 0x5A && addr <= 0x5D) {
+          upstreamMprFound = true;
+        }
+      }
+    }
+    if (!upstreamFoundAny) {
+      Serial.print("no devices");
+    }
+    Serial.println();
+
+    if (upstreamMprFound) {
+      Serial.println("  NOTE: MPR121 detected on upstream bus. Check mux-side wiring/channels.");
+    }
+
+    // Prefer configured default first, then scan the full TCA9548A range.
+    _muxAddr = i2cAddressResponds(TCA9548A_ADDR) ? TCA9548A_ADDR : 0;
+    if (_muxAddr == 0) {
+      for (uint8_t addr = 0x70; addr <= 0x77; ++addr) {
+        if (addr == TCA9548A_ADDR) continue;
+        if (i2cAddressResponds(addr)) {
+          _muxAddr = addr;
+          break;
+        }
+      }
+    }
+
+    if (_muxAddr == 0) {
+      Serial.println("  TCA9548A not found at 0x70-0x77");
+      Serial.println("  If upstream scan also shows no devices, SDA/SCL/pullups/power/reset is the likely fault.");
+      return;
+    }
+
+    Serial.print("  TCA9548A detected at 0x");
+    Serial.println(_muxAddr, HEX);
+
+    const uint8_t candidateAddrs[] = {0x5A, 0x5B, 0x5C, 0x5D};
+    for (uint8_t ch = 0; ch < NUM_MUX_CHANNELS; ++ch) {
+      if (!tcaSelect(ch)) {
+        Serial.print("  mux ch");
+        Serial.print(ch);
+        Serial.println(": select failed");
+        continue;
+      }
+      delayMicroseconds(MUX_SETTLE_US);
+
+      Serial.print("  mux ch");
+      Serial.print(ch);
+      Serial.print(": ");
+
+      bool any = false;
+      for (uint8_t i = 0; i < sizeof(candidateAddrs); ++i) {
+        uint8_t addr = candidateAddrs[i];
+        if (i2cAddressResponds(addr)) {
+          if (any) Serial.print(", ");
+          Serial.print("0x");
+          Serial.print(addr, HEX);
+          any = true;
+        }
+      }
+
+      if (!any) {
+        Serial.print("no device at 0x5A-0x5D");
+      }
+      Serial.println();
+
+      if (SENSOR_STARTUP_DEEP_SCAN) {
+        Serial.print("  mux ch");
+        Serial.print(ch);
+        Serial.print(" full scan: ");
+        bool foundAny = false;
+        for (uint8_t addr = 0x03; addr <= 0x77; ++addr) {
+          if (i2cAddressResponds(addr)) {
+            if (foundAny) Serial.print(", ");
+            Serial.print("0x");
+            Serial.print(addr, HEX);
+            foundAny = true;
+          }
+        }
+        if (!foundAny) {
+          Serial.print("no devices");
+        }
+        Serial.println();
+      }
+    }
+  }
+
+  bool tcaSelect(uint8_t channel) {
+    if (channel > 7 || _muxAddr == 0) return false;
+
+    Wire.beginTransmission(_muxAddr);
     Wire.write(1 << channel);
-    Wire.endTransmission();
+    return Wire.endTransmission() == 0;
   }
 
   bool initSensor(Adafruit_MPR121& sensor, uint8_t channel, const char* label) {
-    tcaSelect(channel);
-    delay(10);
-
-    if (!sensor.begin(MPR121_ADDR)) {
+    if (!tcaSelect(channel)) {
       Serial.print(label);
-      Serial.println(" not found");
+      Serial.println(" mux select failed");
+      return false;
+    }
+    delay(1);
+
+    // MPR121 supports 4 possible I2C addresses based on ADDR pin strap.
+    const uint8_t candidateAddrs[] = {0x5A, 0x5B, 0x5C, 0x5D};
+    uint8_t foundAddr = 0;
+    for (uint8_t i = 0; i < sizeof(candidateAddrs); ++i) {
+      uint8_t addr = candidateAddrs[i];
+      if (sensor.begin(addr)) {
+        foundAddr = addr;
+        break;
+      }
+    }
+
+    if (foundAddr == 0) {
+      Serial.print(label);
+      Serial.println(" not found (tried 0x5A-0x5D)");
       return false;
     }
 
+    _sensorAddr[channel] = foundAddr;
+
     sensor.setAutoconfig(true);
-    sensor.setThresholds(8, 4);
+    sensor.setThresholds(MPR121_TOUCH_THRESHOLD, MPR121_RELEASE_THRESHOLD);
 
     Serial.print(label);
-    Serial.println(" found");
+    Serial.print(" found at 0x");
+    Serial.println(foundAddr, HEX);
     return true;
   }
 
   AxisTouch getStrongestTouch(Adafruit_MPR121& sensor, uint8_t muxChannel) {
     AxisTouch result = {false, 0, 0};
 
-    tcaSelect(muxChannel);
-    delay(2);
+    if (!tcaSelect(muxChannel)) {
+      return result;
+    }
+    delayMicroseconds(MUX_SETTLE_US);
 
     uint16_t touched = sensor.touched();
 

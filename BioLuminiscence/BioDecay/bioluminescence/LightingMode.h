@@ -1,11 +1,11 @@
 // ============================================================
-// DecayMode.h
-// Abstract base class – mirrors LightingMode.h from the
-// mpr121_multi_mode project but adapted for time-based decay.
-// Every concrete decay model inherits from this.
+// LightingMode.h
+// Abstract base class – mirrors the original lighting-mode project
+// structure but adapted for time-based lighting behaviour.
+// Every concrete lighting mode inherits from this.
 // ============================================================
-#ifndef DECAY_MODE_H
-#define DECAY_MODE_H
+#ifndef LIGHTING_MODE_H
+#define LIGHTING_MODE_H
 
 #include "ProjectConfig.h"
 
@@ -17,45 +17,25 @@ struct TouchEvent {
   int16_t pressure;
 };
 
-class DecayMode {
+class LightingMode {
 public:
-  virtual ~DecayMode() {}
+  virtual ~LightingMode() {}
 
-  // ── Lifecycle ──────────────────────────────────────────────
-
-  // Called once when the mode becomes active.
-  // Reset all internal state here.
   virtual void enter(Adafruit_NeoPixel& strip) = 0;
 
-  // Called when a touch / release event fires.
-  //   panelId   : LED panel index driven by this X/Y sensor pair
-  //   xCell/yCell: touched coordinate on the 8x8 touch grid
-  //   isTouched : true = finger down, false = finger lifted
-  //   pressure  : baseline - filtered (proxy for touch strength)
   virtual void onTouch(Adafruit_NeoPixel& strip,
                        const TouchEvent& event) = 0;
 
-  // Called every loop() cycle for continuous animation updates.
   virtual void update(Adafruit_NeoPixel& strip) = 0;
 
-  // Human-readable label shown in Serial Monitor.
   virtual const char* getName() = 0;
 
-  // ── Shared math helpers ────────────────────────────────────
-  // Evaluate any decay I(t) and clamp result to [0, 255].
-  // Subclasses call this to convert float intensity → LED brightness.
   static uint8_t intensityToBrightness(float I) {
     if (I <= 0.0f) return 0;
     if (I >= 120.0f) return 120;
     return (uint8_t)I;
   }
 
-  // Mass-spring-damper impulse response driven by touch pressure.
-  // Equation: m*x'' + c*x' + k*x = F(t), with F(t)=J*delta(t).
-  // t_ms      : elapsed time since touch [ms]
-  // pressure  : touch strength proxy from SensorHub
-  // m, c, k   : mass, damping, stiffness model parameters
-  // forceGain : scales pressure into impulse magnitude J
   static float massSpringResponse(float t_ms,
                                   int16_t pressure,
                                   float m = 1.0f,
@@ -91,4 +71,4 @@ public:
   }
 };
 
-#endif // DECAY_MODE_H
+#endif // LIGHTING_MODE_H

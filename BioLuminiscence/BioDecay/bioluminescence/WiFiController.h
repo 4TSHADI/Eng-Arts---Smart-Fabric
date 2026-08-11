@@ -1,6 +1,8 @@
 #ifndef WIFI_CONTROLLER_H
 #define WIFI_CONTROLLER_H
 
+#include <stdlib.h>
+#include <string.h>
 #include <WiFiS3.h>
 
 #include "ProjectConfig.h"
@@ -45,22 +47,19 @@ public:
     WiFiClient client = _server.available();
     if (!client) return;
 
-    String requestLine = client.readStringUntil('\r');
-    client.readStringUntil('\n');
+    client.setTimeout(50);
 
-    while (client.connected() && client.available()) {
-      String line = client.readStringUntil('\n');
-      if (line == "\r" || line.length() == 1) break;
+    char requestLine[128];
+    if (!readLine(client, requestLine, sizeof(requestLine))) {
+      client.stop();
+      return;
     }
 
-    int modeParam = requestLine.indexOf("/mode?index=");
-    if (modeParam >= 0) {
-      int valueStart = modeParam + 12;
-      int valueEnd = requestLine.indexOf(' ', valueStart);
-      if (valueEnd > valueStart) {
-        int modeIndex = requestLine.substring(valueStart, valueEnd).toInt();
-        modeController.selectMode((uint8_t)modeIndex, strip);
-      }
+    drainHeaders(client);
+
+    uint8_t modeIndex = 0;
+    if (extractModeIndex(requestLine, modeIndex)) {
+      modeController.selectMode(modeIndex, strip);
     }
 
     sendPage(client, modeController);
@@ -72,15 +71,44 @@ private:
   WiFiServer _server{WIFI_HTTP_PORT};
   bool _ready;
 
+  bool readLine(WiFiClient& client, char* out, size_t outSize) {
+    if (out == nullptr || outSize < 2) return false;
+    size_t n = client.readBytesUntil('\n', out, outSize - 1);
+    out[n] = '\0';
+    if (n > 0 && out[n - 1] == '\r') {
+      out[n - 1] = '\0';
+    }
+    return n > 0;
+  }
+
+  void drainHeaders(WiFiClient& client) {
+    char line[128];
+    while (readLine(client, line, sizeof(line))) {
+      if (line[0] == '\0') break;
+    }
+  }
+
+  bool extractModeIndex(const char* requestLine, uint8_t& outIndex) {
+    const char* key = strstr(requestLine, "GET /mode?index=");
+    if (key == nullptr) return false;
+
+    key += strlen("GET /mode?index=");
+    int parsed = atoi(key);
+    if (parsed < 0 || parsed > 255) return false;
+
+    outIndex = (uint8_t)parsed;
+    return true;
+  }
+
   void sendPage(WiFiClient& client, ModeController& modeController) {
     client.println("HTTP/1.1 200 OK");
     client.println("Content-Type: text/html");
     client.println("Connection: close");
     client.println();
     client.println("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>");
-    client.println("<title>BioDecay Modes</title>");
+    client.println("<title>BioLighting Modes</title>");
     client.println("<style>body{font-family:Arial,sans-serif;background:#07131a;color:#dff7ff;margin:0;padding:24px;}h1{font-size:28px;}p{color:#9fc2cf;}button{display:block;width:100%;max-width:320px;margin:12px 0;padding:16px;border:0;border-radius:12px;background:#0f7c8c;color:white;font-size:18px;}button.active{background:#33b36b;}a{text-decoration:none;}</style></head><body>");
-    client.println("<h1>BioDecay Mode Control</h1>");
+    client.println("<h1>BioLighting Mode Control</h1>");
     client.print("<p>Current mode: ");
     client.print(modeController.modeName(modeController.activeIndex()));
     client.println("</p>");

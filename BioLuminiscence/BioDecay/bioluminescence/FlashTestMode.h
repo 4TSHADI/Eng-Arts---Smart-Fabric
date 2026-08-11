@@ -5,9 +5,9 @@
 #ifndef FLASH_TEST_MODE_H
 #define FLASH_TEST_MODE_H
 
-#include "DecayMode.h"
+#include "LightingMode.h"
 
-class FlashTestMode : public DecayMode {
+class FlashTestMode : public LightingMode {
 public:
   void enter(Adafruit_NeoPixel& strip) override;
   void onTouch(Adafruit_NeoPixel& strip,

@@ -1,9 +1,9 @@
 // ============================================================
-// MultiExpDecayMode.cpp
-// MODEL 3 – SimpleDecay + dual-time-constant tail
+// MultiExpLightingMode.cpp
+// MODEL 3 – SimpleLighting + dual-time-constant tail
 // I(t) = scale * [A1*e^(−t/tau1) + A2*e^(−t/tau2)]
 // ============================================================
-#include "MultiExpDecayMode.h"
+#include "MultiExpLightingMode.h"
 
 namespace {
 float hash01(uint32_t n) {
@@ -14,26 +14,28 @@ float hash01(uint32_t n) {
 
 // ── Lifecycle ─────────────────────────────────────────────────
 
-void MultiExpDecayMode::enter(Adafruit_NeoPixel& strip) {
-  SimpleDecayMode::enter(strip);
+void MultiExpLightingMode::enter(Adafruit_NeoPixel& strip) {
+  SimpleLightingMode::enter(strip);
 
   tau = tau1;
   _scale        = 1.0f;
 
-  Serial.println("[MultiExpDecay] Entered. Inherits SimpleDecay, adds slow tail.");
-  Serial.print("  Fast: A1="); Serial.print(A1); Serial.print("  tau1="); Serial.print(tau1); Serial.println("ms");
-  Serial.print("  Slow: A2="); Serial.print(A2); Serial.print("  tau2="); Serial.print(tau2); Serial.println("ms");
+  if (MODE_EVENT_SERIAL_LOG) {
+    Serial.println("[MultiExpLighting] Entered. Inherits SimpleLighting, adds slow tail.");
+    Serial.print("  Fast: A1="); Serial.print(A1); Serial.print("  tau1="); Serial.print(tau1); Serial.println("ms");
+    Serial.print("  Slow: A2="); Serial.print(A2); Serial.print("  tau2="); Serial.print(tau2); Serial.println("ms");
+  }
 }
 
-void MultiExpDecayMode::onTouch(Adafruit_NeoPixel& strip,
-                                 const TouchEvent& event) {
+void MultiExpLightingMode::onTouch(Adafruit_NeoPixel& strip,
+                                   const TouchEvent& event) {
   if (event.isTouched) {
     _scale = constrain(map(event.pressure, 0, 255, 50, 100), 50, 100) / 100.0f;
   }
-  SimpleDecayMode::onTouch(strip, event);
+  SimpleLightingMode::onTouch(strip, event);
 }
 
-void MultiExpDecayMode::update(Adafruit_NeoPixel& strip) {
+void MultiExpLightingMode::update(Adafruit_NeoPixel& strip) {
   bool anyActive = false;
   for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
     if (_touchStates[p].active) { anyActive = true; break; }
@@ -63,7 +65,7 @@ void MultiExpDecayMode::update(Adafruit_NeoPixel& strip) {
 
 // ── Math ──────────────────────────────────────────────────────
 
-float MultiExpDecayMode::computeIntensity(const TouchDecayState& state, float t_ms) {
+float MultiExpLightingMode::computeIntensity(const TouchLightingState& state, float t_ms) {
   float fast = _scale * A1 * expf(-t_ms / tau1);
   float slow = _scale * A2 * expf(-t_ms / tau2);
   float spring = massSpringResponse(t_ms, state.pressure);
@@ -71,10 +73,10 @@ float MultiExpDecayMode::computeIntensity(const TouchDecayState& state, float t_
   return (fast + slow) * springGain;
 }
 
-void MultiExpDecayMode::renderBlobField(Adafruit_NeoPixel& strip,
-                                        uint16_t touchPoint,
-                                        const TouchDecayState& state,
-                                        float t_ms) {
+void MultiExpLightingMode::renderBlobField(Adafruit_NeoPixel& strip,
+                                          uint16_t touchPoint,
+                                          const TouchLightingState& state,
+                                          float t_ms) {
   PinRegion region = getTouchRegion(touchPointPanel(touchPoint),
                                     touchPointX(touchPoint),
                                     touchPointY(touchPoint));

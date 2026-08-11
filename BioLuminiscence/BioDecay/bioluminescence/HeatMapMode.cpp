@@ -32,8 +32,10 @@ void HeatMapMode::enter(Adafruit_NeoPixel& strip) {
     _touchStates[p].lastTouch  = 0;
   }
 
-  Serial.println("[HeatMap] Entered – touch coordinates to build heat.");
-  Serial.println("          Red = hot (often touched), Blue = cool (resting).");
+  if (MODE_EVENT_SERIAL_LOG) {
+    Serial.println("[HeatMap] Entered – touch coordinates to build heat.");
+    Serial.println("          Red = hot (often touched), Blue = cool (resting).");
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -53,14 +55,16 @@ void HeatMapMode::onTouch(Adafruit_NeoPixel& strip,
     boost *= (1.0f + 0.45f * springBoost);
     _touchStates[touchPoint].heat = min(1.0f, _touchStates[touchPoint].heat + boost);
 
-    _touchStates[touchPoint].brightness  = constrain(map(event.pressure, 0, 255, 120, 255) * (1.0f + 0.35f * springBoost), 120, 255);
+    _touchStates[touchPoint].brightness  = constrain(map(event.pressure, 0, 255, 150, 255) * (1.0f + 0.35f * springBoost), 150, 255);
     _touchStates[touchPoint].lastTouch   = millis();
 
-    Serial.print("[HeatMap] panel="); Serial.print(event.panelId);
-    Serial.print(" x="); Serial.print(event.xCell);
-    Serial.print(" y="); Serial.print(event.yCell);
-    Serial.print(" pressure="); Serial.print(event.pressure);
-    Serial.print(" heat="); Serial.println(_touchStates[touchPoint].heat, 3);
+    if (MODE_EVENT_SERIAL_LOG) {
+      Serial.print("[HeatMap] panel="); Serial.print(event.panelId);
+      Serial.print(" x="); Serial.print(event.xCell);
+      Serial.print(" y="); Serial.print(event.yCell);
+      Serial.print(" pressure="); Serial.print(event.pressure);
+      Serial.print(" heat="); Serial.println(_touchStates[touchPoint].heat, 3);
+    }
   }
 }
 
@@ -90,7 +94,7 @@ void HeatMapMode::update(Adafruit_NeoPixel& strip) {
     float t_ms   = (float)(now - _touchStates[p].lastTouch);
     float flashI = _touchStates[p].brightness * expf(-t_ms / flashTau);
 
-    float heatFloor = ambientBri + _touchStates[p].heat * 180.0f;
+    float heatFloor = ambientBri + _touchStates[p].heat * 220.0f;
     float bri = max(flashI, heatFloor);
     _touchStates[p].brightness = (bri > flashI) ? bri : flashI;
 
@@ -112,7 +116,7 @@ void HeatMapMode::renderFrame(Adafruit_NeoPixel& strip) {
   for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
     float t_ms   = (float)(now - _touchStates[p].lastTouch);
     float flashI = _touchStates[p].brightness * expf(-t_ms / flashTau);
-    float heatFloor = ambientBri + _touchStates[p].heat * 180.0f;
+    float heatFloor = ambientBri + _touchStates[p].heat * 220.0f;
     float bri    = max(flashI, heatFloor);
 
     if (bri < 1.0f && _touchStates[p].heat < 0.002f) continue;

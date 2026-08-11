@@ -1,19 +1,19 @@
 // ============================================================
-// SimpleDecayMode.cpp
+// SimpleLightingMode.cpp
 // MODEL 1 – I(t) = I₀ · e^(−t/τ)
 //
 // Per-touch-point behaviour:
-//   • Touch  → start an independent exponential decay for that cell
+//   • Touch  → start an independent exponential lighting response for that cell
 //   • update() → for every active cell, evaluate I(t) and paint its
 //                region onto the frame buffer with a Gaussian
 //                brightness gradient (bright centre, dark edges)
 //   • Multiple touch points can glow simultaneously
 // ============================================================
-#include "SimpleDecayMode.h"
+#include "SimpleLightingMode.h"
 
 // ── Lifecycle ─────────────────────────────────────────────────
 
-void SimpleDecayMode::enter(Adafruit_NeoPixel& strip) {
+void SimpleLightingMode::enter(Adafruit_NeoPixel& strip) {
   strip.clear();
   strip.show();
 
@@ -24,11 +24,13 @@ void SimpleDecayMode::enter(Adafruit_NeoPixel& strip) {
     _touchStates[p].pressure  = 0;
   }
 
-  Serial.println("[SimpleDecay] Entered – touch coordinates trigger compact regions.");
+  if (MODE_EVENT_SERIAL_LOG) {
+    Serial.println("[SimpleLighting] Entered – touch coordinates trigger compact regions.");
+  }
 }
 
-void SimpleDecayMode::onTouch(Adafruit_NeoPixel& strip,
-                               const TouchEvent& event) {
+void SimpleLightingMode::onTouch(Adafruit_NeoPixel& strip,
+                                 const TouchEvent& event) {
   if (event.xCell >= TOUCH_GRID_SIZE || event.yCell >= TOUCH_GRID_SIZE) return;
 
   uint16_t touchPoint = touchPointIndex(event.panelId, event.xCell, event.yCell);
@@ -39,15 +41,17 @@ void SimpleDecayMode::onTouch(Adafruit_NeoPixel& strip,
     _touchStates[touchPoint].startTime = millis();
     _touchStates[touchPoint].active    = true;
 
-    Serial.print("[SimpleDecay] panel="); Serial.print(event.panelId);
-    Serial.print(" x="); Serial.print(event.xCell);
-    Serial.print(" y="); Serial.print(event.yCell);
-    Serial.print(" pressure="); Serial.print(event.pressure);
-    Serial.print(" I0="); Serial.println(_touchStates[touchPoint].I0_actual);
+    if (MODE_EVENT_SERIAL_LOG) {
+      Serial.print("[SimpleLighting] panel="); Serial.print(event.panelId);
+      Serial.print(" x="); Serial.print(event.xCell);
+      Serial.print(" y="); Serial.print(event.yCell);
+      Serial.print(" pressure="); Serial.print(event.pressure);
+      Serial.print(" I0="); Serial.println(_touchStates[touchPoint].I0_actual);
+    }
   }
 }
 
-void SimpleDecayMode::update(Adafruit_NeoPixel& strip) {
+void SimpleLightingMode::update(Adafruit_NeoPixel& strip) {
   bool anyActive = false;
   for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
     if (_touchStates[p].active) { anyActive = true; break; }
@@ -61,7 +65,7 @@ void SimpleDecayMode::update(Adafruit_NeoPixel& strip) {
 
 // ── Rendering ────────────────────────────────────────────────
 
-void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
+void SimpleLightingMode::renderFrame(Adafruit_NeoPixel& strip) {
   unsigned long now = millis();
 
   for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
@@ -72,8 +76,10 @@ void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
 
     if (I < 1.0f) {
       _touchStates[p].active = false;
-      Serial.print("[SimpleDecay] touchPoint="); Serial.print(p);
-      Serial.println(" decay complete.");
+      if (MODE_EVENT_SERIAL_LOG) {
+        Serial.print("[SimpleLighting] touchPoint="); Serial.print(p);
+        Serial.println(" lighting response complete.");
+      }
       continue;
     }
 
@@ -126,10 +132,10 @@ void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
 
 // ── Math ──────────────────────────────────────────────────────
 
-float SimpleDecayMode::computeIntensity(const TouchDecayState& state, float t_ms) {
+float SimpleLightingMode::computeIntensity(const TouchLightingState& state, float t_ms) {
   //  I(t) = I₀ · e^(−t/τ)
-  float baseDecay = state.I0_actual * expf(-t_ms / tau);
+  float baseLighting = state.I0_actual * expf(-t_ms / tau);
   float spring = massSpringResponse(t_ms, state.pressure);
   float springGain = 1.0f + 0.70f * spring;
-  return baseDecay * springGain;
+  return baseLighting * springGain;
 }

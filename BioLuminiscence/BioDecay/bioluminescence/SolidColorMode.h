@@ -7,9 +7,9 @@
 #ifndef SOLID_COLOR_MODE_H
 #define SOLID_COLOR_MODE_H
 
-#include "DecayMode.h"
+#include "LightingMode.h"
 
-class SolidColorMode : public DecayMode {
+class SolidColorMode : public LightingMode {
 public:
   void enter  (Adafruit_NeoPixel& strip) override;
   void onTouch(Adafruit_NeoPixel& strip,
