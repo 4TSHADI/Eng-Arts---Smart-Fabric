@@ -1,0 +1,326 @@
+#include <Wire.h>
+#include <Adafruit_MPR121.h>
+#include <Adafruit_NeoPixel.h>
+
+// ---------------- CONFIG ----------------
+#define FACE_SIZE      16
+#define NUM_FACES      2
+#define PIXELS_PER_FACE (FACE_SIZE * FACE_SIZE)
+#define NUM_LEDS_TOTAL  (PIXELS_PER_FACE * NUM_FACES)
+
+#define DATA_PIN       6
+#define NEOPIXEL_TYPE  (NEO_GRB + NEO_KHZ800)
+
+#define TCA9548A_ADDR  0x70
+#define MPR121_ADDR    0x5A   // 四颗芯片地址相同，靠mux通道区分
+
+// face0: 列=通道0, 行=通道1; face1: 列=通道2, 行=通道3
+#define colChannel(face) ((face) * 2)
+#define rowChannel(face) ((face) * 2 + 1)
+
+#define NUM_COL_ELECTRODES 8
+#define NUM_ROW_ELECTRODES 8
+// 每颗MPR121只用这8个非连续pin
+const uint8_t ELECTRODE_PINS[8] = {0, 1, 2, 3, 4, 5, 6, 11};
+
+#define TOUCH_THRESH   16
+#define RELEASE_THRESH 8
+
+#define DECAY_FACTOR   0.85f
+#define DEPOSIT_GAIN   255.0f
+#define LOOP_BUDGET_MS 50
+
+#define ELECTRODE_TO_LED_SCALE ((float)(FACE_SIZE - 1) / (float)(NUM_COL_ELECTRODES - 1))
+
+#define NOISE_FLOOR        30.0f
+#define OUTPUT_SMOOTHING   0.5f
+
+#define EDGE_MARGIN     2.0f
+#define BLEED_STRENGTH  0.4f
+
+#define HEAT_PER_TOUCH   2.0f
+#define HEAT_SATURATION  100.0f
+
+Adafruit_NeoPixel strip(NUM_LEDS_TOTAL, DATA_PIN, NEOPIXEL_TYPE);
+Adafruit_MPR121 capCol[NUM_FACES];
+Adafruit_MPR121 capRow[NUM_FACES];
+bool colReady[NUM_FACES];
+bool rowReady[NUM_FACES];
+
+float brightness[NUM_FACES][FACE_SIZE][FACE_SIZE];
+float heatCount[NUM_FACES][FACE_SIZE][FACE_SIZE];   // 不衰减，持续累计触摸热度
+
+float smoothedCol[NUM_FACES];
+float smoothedRow[NUM_FACES];
+
+// ---------------- 边缘邻接表 ----------------
+// 每个面4条边: 0=上 1=右 2=下 3=左
+// face0左边 <-> face1右边，其余边没有邻居
+struct EdgeLink {
+  int8_t neighborFace;
+  uint8_t neighborEdge;
+  bool reversed;
+};
+
+EdgeLink edgeMap[NUM_FACES][4] = {
+  // face0: 上 右 下 左
+  { {-1,0,false}, {-1,0,false}, {-1,0,false}, {1,1,false} },
+  // face1: 上 右 下 左
+  { {-1,0,false}, {0,3,false}, {-1,0,false}, {-1,0,false} }
+};
+
+// ---------------- TCA9548A 通道选择 ----------------
+void tcaSelect(uint8_t channel) {
+  if (channel > 7) return;
+  Wire.beginTransmission(TCA9548A_ADDR);
+  Wire.write(1 << channel);
+  Wire.endTransmission();
+}
+
+// ---------------- LED 坐标映射 ----------------
+uint16_t faceXY(uint8_t x, uint8_t y) {
+  if (y % 2 == 0) {
+    return y * FACE_SIZE + (FACE_SIZE - 1 - x);
+  } else {
+    return y * FACE_SIZE + x;
+  }
+}
+
+uint16_t globalXY(uint8_t face, uint8_t x, uint8_t y) {
+  return face * PIXELS_PER_FACE + faceXY(x, y);
+}
+
+uint16_t heatToHue(float heat) {
+  float t = heat / HEAT_SATURATION;
+  if (t > 1.0f) t = 1.0f;
+  return (uint16_t)(43690.0f * (1.0f - t)); // 蓝(43690) -> 红(0)
+}
+
+inline float clampBrightness(float v) {
+  return v > 255.0f ? 255.0f : v;
+}
+
+// ---------------- SETUP ----------------
+void setup() {
+  Serial.begin(9600);
+  uint32_t t0 = millis();
+  while (!Serial && millis() - t0 < 1500) { }
+
+  Wire.begin();
+
+  Serial.println("Initializing 2 faces (4 MPR121 chips, pins {0,1,2,3,4,5,6,11}) via TCA9548A...");
+
+  for (uint8_t f = 0; f < NUM_FACES; f++) {
+    tcaSelect(colChannel(f));
+    if (capCol[f].begin(MPR121_ADDR, &Wire)) {
+      capCol[f].setAutoconfig(true);
+      capCol[f].setThresholds(TOUCH_THRESH, RELEASE_THRESH);
+      colReady[f] = true;
+      Serial.print("Face "); Serial.print(f); Serial.println(" col-chip: found.");
+    } else {
+      colReady[f] = false;
+      Serial.print("Face "); Serial.print(f); Serial.println(" col-chip: NOT found.");
+    }
+
+    tcaSelect(rowChannel(f));
+    if (capRow[f].begin(MPR121_ADDR, &Wire)) {
+      capRow[f].setAutoconfig(true);
+      capRow[f].setThresholds(TOUCH_THRESH, RELEASE_THRESH);
+      rowReady[f] = true;
+      Serial.print("Face "); Serial.print(f); Serial.println(" row-chip: found.");
+    } else {
+      rowReady[f] = false;
+      Serial.print("Face "); Serial.print(f); Serial.println(" row-chip: NOT found.");
+    }
+
+    smoothedCol[f] = -1;
+    smoothedRow[f] = -1;
+  }
+
+  strip.begin();
+  strip.setBrightness(150);
+  strip.clear();
+  strip.show();
+
+  memset(brightness, 0, sizeof(brightness));
+  memset(heatCount, 0, sizeof(heatCount));
+
+  Serial.println("Two-face single-touch heatmap trail ready (edge bleed: face0-left <-> face1-right).");
+}
+
+// ---------------- 触摸读取：加权质心（单点） ----------------
+bool getTouchPoint(uint8_t face, float &electrodeRow, float &electrodeCol) {
+  if (!colReady[face] || !rowReady[face]) return false;
+
+  tcaSelect(colChannel(face));
+  float colValueSum = 0, colWeightSum = 0;
+  for (int e = 0; e < NUM_COL_ELECTRODES; e++) {
+    uint8_t pin = ELECTRODE_PINS[e];
+    float strength = (float)capCol[face].baselineData(pin) - (float)capCol[face].filteredData(pin);
+    if (strength > NOISE_FLOOR) {
+      colWeightSum += strength;
+      colValueSum += strength * e;
+    }
+  }
+
+  tcaSelect(rowChannel(face));
+  float rowValueSum = 0, rowWeightSum = 0;
+  for (int e = 0; e < NUM_ROW_ELECTRODES; e++) {
+    uint8_t pin = ELECTRODE_PINS[e];
+    float strength = (float)capRow[face].baselineData(pin) - (float)capRow[face].filteredData(pin);
+    if (strength > NOISE_FLOOR) {
+      rowWeightSum += strength;
+      rowValueSum += strength * e;
+    }
+  }
+
+  if (colWeightSum < NOISE_FLOOR || rowWeightSum < NOISE_FLOOR) {
+    smoothedCol[face] = -1;
+    smoothedRow[face] = -1;
+    return false;
+  }
+
+  float rawCol = colValueSum / colWeightSum;
+  float rawRow = rowValueSum / rowWeightSum;
+
+  if (smoothedCol[face] < 0) smoothedCol[face] = rawCol;
+  else smoothedCol[face] = OUTPUT_SMOOTHING * rawCol + (1 - OUTPUT_SMOOTHING) * smoothedCol[face];
+
+  if (smoothedRow[face] < 0) smoothedRow[face] = rawRow;
+  else smoothedRow[face] = OUTPUT_SMOOTHING * rawRow + (1 - OUTPUT_SMOOTHING) * smoothedRow[face];
+
+  electrodeCol = smoothedCol[face];
+  electrodeRow = smoothedRow[face];
+
+  if (electrodeCol < 0) electrodeCol = 0;
+  if (electrodeCol > NUM_COL_ELECTRODES - 1) electrodeCol = NUM_COL_ELECTRODES - 1;
+  if (electrodeRow < 0) electrodeRow = 0;
+  if (electrodeRow > NUM_ROW_ELECTRODES - 1) electrodeRow = NUM_ROW_ELECTRODES - 1;
+
+  return true;
+}
+
+// ---------------- 亮度缓存更新 ----------------
+void decayFaceBuffer(uint8_t face) {
+  for (int y = 0; y < FACE_SIZE; y++) {
+    for (int x = 0; x < FACE_SIZE; x++) {
+      brightness[face][y][x] *= DECAY_FACTOR;
+      if (brightness[face][y][x] < 0.5f) brightness[face][y][x] = 0.0f;
+      // heatCount 不衰减
+    }
+  }
+}
+
+void depositBilinear(uint8_t face, float ledRow, float ledCol) {
+  int y0 = (int)floor(ledRow);
+  int x0 = (int)floor(ledCol);
+  int y1 = min(y0 + 1, FACE_SIZE - 1);
+  int x1 = min(x0 + 1, FACE_SIZE - 1);
+
+  float fy = ledRow - y0;
+  float fx = ledCol - x0;
+
+  float w00 = (1 - fy) * (1 - fx);
+  float w01 = (1 - fy) * fx;
+  float w10 = fy * (1 - fx);
+  float w11 = fy * fx;
+
+  brightness[face][y0][x0] += DEPOSIT_GAIN * w00;
+  brightness[face][y0][x1] += DEPOSIT_GAIN * w01;
+  brightness[face][y1][x0] += DEPOSIT_GAIN * w10;
+  brightness[face][y1][x1] += DEPOSIT_GAIN * w11;
+
+  brightness[face][y0][x0] = clampBrightness(brightness[face][y0][x0]);
+  brightness[face][y0][x1] = clampBrightness(brightness[face][y0][x1]);
+  brightness[face][y1][x0] = clampBrightness(brightness[face][y1][x0]);
+  brightness[face][y1][x1] = clampBrightness(brightness[face][y1][x1]);
+
+  heatCount[face][y0][x0] += HEAT_PER_TOUCH * w00;
+  heatCount[face][y0][x1] += HEAT_PER_TOUCH * w01;
+  heatCount[face][y1][x0] += HEAT_PER_TOUCH * w10;
+  heatCount[face][y1][x1] += HEAT_PER_TOUCH * w11;
+}
+
+void depositEdgeBleed(uint8_t neighborFace, uint8_t neighborEdge, float alongEdge, float depthFromEdge, float strength) {
+  float nRow, nCol;
+  switch (neighborEdge) {
+    case 0: nRow = depthFromEdge; nCol = alongEdge; break;
+    case 1: nRow = alongEdge; nCol = FACE_SIZE - 1 - depthFromEdge; break;
+    case 2: nRow = FACE_SIZE - 1 - depthFromEdge; nCol = alongEdge; break;
+    default: nRow = alongEdge; nCol = depthFromEdge; break;
+  }
+  int r = (int)nRow, c = (int)nCol;
+  if (r < 0 || r >= FACE_SIZE || c < 0 || c >= FACE_SIZE) return;
+  brightness[neighborFace][r][c] += DEPOSIT_GAIN * strength;
+  brightness[neighborFace][r][c] = clampBrightness(brightness[neighborFace][r][c]);
+}
+
+void bleedAcrossEdges(uint8_t face, float ledRow, float ledCol) {
+  if (ledRow < EDGE_MARGIN && edgeMap[face][0].neighborFace >= 0) {
+    EdgeLink link = edgeMap[face][0];
+    float alongEdge = link.reversed ? (FACE_SIZE - 1 - ledCol) : ledCol;
+    depositEdgeBleed(link.neighborFace, link.neighborEdge, alongEdge, ledRow, BLEED_STRENGTH);
+  }
+  if (ledRow > FACE_SIZE - 1 - EDGE_MARGIN && edgeMap[face][2].neighborFace >= 0) {
+    EdgeLink link = edgeMap[face][2];
+    float alongEdge = link.reversed ? (FACE_SIZE - 1 - ledCol) : ledCol;
+    depositEdgeBleed(link.neighborFace, link.neighborEdge, alongEdge, FACE_SIZE - 1 - ledRow, BLEED_STRENGTH);
+  }
+  if (ledCol < EDGE_MARGIN && edgeMap[face][3].neighborFace >= 0) {
+    EdgeLink link = edgeMap[face][3];
+    float alongEdge = link.reversed ? (FACE_SIZE - 1 - ledRow) : ledRow;
+    depositEdgeBleed(link.neighborFace, link.neighborEdge, alongEdge, ledCol, BLEED_STRENGTH);
+  }
+  if (ledCol > FACE_SIZE - 1 - EDGE_MARGIN && edgeMap[face][1].neighborFace >= 0) {
+    EdgeLink link = edgeMap[face][1];
+    float alongEdge = link.reversed ? (FACE_SIZE - 1 - ledRow) : ledRow;
+    depositEdgeBleed(link.neighborFace, link.neighborEdge, alongEdge, FACE_SIZE - 1 - ledCol, BLEED_STRENGTH);
+  }
+}
+
+// ---------------- 渲染：颜色根据热度从蓝渐变到红 ----------------
+void renderAllFaces() {
+  strip.clear();
+  for (uint8_t f = 0; f < NUM_FACES; f++) {
+    for (int y = 0; y < FACE_SIZE; y++) {
+      for (int x = 0; x < FACE_SIZE; x++) {
+        uint8_t b = (uint8_t)brightness[f][y][x];
+        if (b > 0) {
+          uint16_t hue = heatToHue(heatCount[f][y][x]);
+          uint32_t color = strip.gamma32(strip.ColorHSV(hue, 200, b));
+          strip.setPixelColor(globalXY(f, x, y), color);
+        }
+      }
+    }
+  }
+  strip.show();
+}
+
+// ---------------- 主循环 ----------------
+void loop() {
+  uint32_t frameStart = millis();
+
+  for (uint8_t f = 0; f < NUM_FACES; f++) {
+    float electrodeRow, electrodeCol;
+    bool active = getTouchPoint(f, electrodeRow, electrodeCol);
+
+    decayFaceBuffer(f);
+    if (active) {
+      float ledRow = electrodeRow * ELECTRODE_TO_LED_SCALE;
+      float ledCol = electrodeCol * ELECTRODE_TO_LED_SCALE;
+      depositBilinear(f, ledRow, ledCol);
+      bleedAcrossEdges(f, ledRow, ledCol);
+    }
+  }
+
+  renderAllFaces();
+
+  uint32_t elapsed = millis() - frameStart;
+  if (elapsed < LOOP_BUDGET_MS) {
+    delay(LOOP_BUDGET_MS - elapsed);
+  } else {
+    Serial.print("Warning: frame took ");
+    Serial.print(elapsed);
+    Serial.println(" ms, over 50ms budget.");
+  }
+}
