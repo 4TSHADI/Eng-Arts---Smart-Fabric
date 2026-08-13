@@ -1,60 +1,63 @@
 // ============================================================
-// SimpleDecayMode.cpp
+// SimpleLightingMode.cpp
 // MODEL 1 – I(t) = I₀ · e^(−t/τ)
 //
-// Per-pin behaviour:
-//   • Touch  → start an independent exponential decay for that pin
-//   • update() → for every active pin, evaluate I(t) and paint its
+// Per-touch-point behaviour:
+//   • Touch  → start an independent exponential lighting response for that cell
+//   • update() → for every active cell, evaluate I(t) and paint its
 //                region onto the frame buffer with a Gaussian
 //                brightness gradient (bright centre, dark edges)
-//   • Multiple pins can glow simultaneously
+//   • Multiple touch points can glow simultaneously
 // ============================================================
-#include "SimpleDecayMode.h"
+#include "SimpleLightingMode.h"
 
 // ── Lifecycle ─────────────────────────────────────────────────
 
-void SimpleDecayMode::enter(Adafruit_NeoPixel& strip) {
+void SimpleLightingMode::enter(Adafruit_NeoPixel& strip) {
   strip.clear();
   strip.show();
 
-  // Reset all per-pin state
-  for (uint8_t p = 0; p < NUM_PINS; p++) {
-    _pins[p].active    = false;
-    _pins[p].startTime = 0;
-    _pins[p].I0_actual = 0.0f;
+  for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
+    _touchStates[p].active    = false;
+    _touchStates[p].startTime = 0;
+    _touchStates[p].I0_actual = 0.0f;
+    _touchStates[p].pressure  = 0;
   }
 
-  Serial.println("[SimpleDecay] Entered – 4x3 Gaussian regions active.");
-  Serial.println("             Touch any electrode to trigger its zone.");
-}
-
-void SimpleDecayMode::onTouch(Adafruit_NeoPixel& strip,
-                               uint8_t pin, bool isTouched, int16_t pressure) {
-  if (pin >= NUM_PINS) return;
-
-  if (isTouched) {
-    // Scale peak brightness with pressure; floor at 80 so a light touch
-    // is still clearly visible.
-    _pins[pin].I0_actual = constrain(map(pressure, 0, 150, 80, 255), 80, 255);
-    _pins[pin].startTime = millis();
-    _pins[pin].active    = true;
-
-    Serial.print("[SimpleDecay] pin="); Serial.print(pin);
-    Serial.print("  pressure=");        Serial.print(pressure);
-    Serial.print("  I0=");              Serial.println(_pins[pin].I0_actual);
+  if (MODE_EVENT_SERIAL_LOG) {
+    Serial.println("[SimpleLighting] Entered – touch coordinates trigger compact regions.");
   }
-  // Finger-up: let the decay finish naturally (don't kill it early)
 }
 
-void SimpleDecayMode::update(Adafruit_NeoPixel& strip) {
-  // Check if anything is active
+void SimpleLightingMode::onTouch(Adafruit_NeoPixel& strip,
+                                 const TouchEvent& event) {
+  if (event.xCell >= TOUCH_GRID_SIZE || event.yCell >= TOUCH_GRID_SIZE) return;
+
+  uint16_t touchPoint = touchPointIndex(event.panelId, event.xCell, event.yCell);
+
+  if (event.isTouched) {
+    _touchStates[touchPoint].I0_actual = constrain(map(event.pressure, 0, 255, 80, 255), 80, 255);
+    _touchStates[touchPoint].pressure  = event.pressure;
+    _touchStates[touchPoint].startTime = millis();
+    _touchStates[touchPoint].active    = true;
+
+    if (MODE_EVENT_SERIAL_LOG) {
+      Serial.print("[SimpleLighting] panel="); Serial.print(event.panelId);
+      Serial.print(" x="); Serial.print(event.xCell);
+      Serial.print(" y="); Serial.print(event.yCell);
+      Serial.print(" pressure="); Serial.print(event.pressure);
+      Serial.print(" I0="); Serial.println(_touchStates[touchPoint].I0_actual);
+    }
+  }
+}
+
+void SimpleLightingMode::update(Adafruit_NeoPixel& strip) {
   bool anyActive = false;
-  for (uint8_t p = 0; p < NUM_PINS; p++) {
-    if (_pins[p].active) { anyActive = true; break; }
+  for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
+    if (_touchStates[p].active) { anyActive = true; break; }
   }
   if (!anyActive) return;
 
-  // Rebuild the frame from scratch each tick so decayed pins fade cleanly
   strip.clear();
   renderFrame(strip);
   strip.show();
@@ -62,29 +65,31 @@ void SimpleDecayMode::update(Adafruit_NeoPixel& strip) {
 
 // ── Rendering ────────────────────────────────────────────────
 
-void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
+void SimpleLightingMode::renderFrame(Adafruit_NeoPixel& strip) {
   unsigned long now = millis();
 
-  for (uint8_t p = 0; p < NUM_PINS; p++) {
-    if (!_pins[p].active) continue;
+  for (uint16_t p = 0; p < NUM_TOUCH_POINTS; p++) {
+    if (!_touchStates[p].active) continue;
 
-    float t_ms = (float)(now - _pins[p].startTime);
-    float I    = computeIntensity(_pins[p], t_ms); // peak intensity 0-255
+    float t_ms = (float)(now - _touchStates[p].startTime);
+    float I    = computeIntensity(_touchStates[p], t_ms);
 
     if (I < 1.0f) {
-      // Decay finished – silence this pin
-      _pins[p].active = false;
-      Serial.print("[SimpleDecay] pin="); Serial.print(p);
-      Serial.println(" decay complete.");
+      _touchStates[p].active = false;
+      if (MODE_EVENT_SERIAL_LOG) {
+        Serial.print("[SimpleLighting] touchPoint="); Serial.print(p);
+        Serial.println(" lighting response complete.");
+      }
       continue;
     }
 
-    // ── Gaussian region draw ───────────────────────────────
-    const PinRegion& region = PIN_REGIONS[p];
-
-    // Broaden the glow slightly so the colour diffuses outward more cleanly.
-    const float spreadX = region.sigmaX * 1.25f;
-    const float spreadY = region.sigmaY * 1.25f;
+    PinRegion region = getTouchRegion(touchPointPanel(p), touchPointX(p), touchPointY(p));
+    // Pressure controls circle size: low pressure = tighter glow,
+    // high pressure = larger glow footprint.
+    float pressureNorm = constrain((float)_touchStates[p].pressure / 255.0f, 0.0f, 1.0f);
+    float radiusScale = 0.25f + 1.35f * pressureNorm;
+    const float spreadX = region.sigmaX * 1.25f * radiusScale;
+    const float spreadY = region.sigmaY * 1.25f * radiusScale;
 
     int xMin = max(0, (int)(region.cx - 4.0f * spreadX));
     int xMax = min((int)WIDTH  - 1, (int)(region.cx + 4.0f * spreadX));
@@ -98,20 +103,17 @@ void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
         float gau = gaussianBrightness(dx, dy, spreadX, spreadY);
         gau = powf(gau, 0.85f); // soften the falloff for a cleaner edge
 
-        // Pixel brightness = decayed intensity × softened Gaussian falloff
         float scaledI = I * gau;
-        if (scaledI < 1.0f) continue; // skip fully dark pixels
+        if (scaledI < 1.0f) continue;
 
         uint8_t bri = (uint8_t)constrain(scaledI, 0.0f, 255.0f);
 
         uint16_t idx = XY((uint8_t)x, (uint8_t)y);
         if (idx >= NUM_LEDS) continue;
 
-        // Accumulate softly so overlapping glows blend instead of snapping.
         uint32_t existing = strip.getPixelColor(idx);
         uint32_t newColor  = bioColor(strip, bri);
 
-        // Extract green & blue channels (no red in our palette)
         uint8_t eG = (existing >> 8)  & 0xFF;
         uint8_t eB = (existing)       & 0xFF;
         uint8_t nG = (newColor  >> 8) & 0xFF;
@@ -130,7 +132,10 @@ void SimpleDecayMode::renderFrame(Adafruit_NeoPixel& strip) {
 
 // ── Math ──────────────────────────────────────────────────────
 
-float SimpleDecayMode::computeIntensity(const PinDecay& pd, float t_ms) {
+float SimpleLightingMode::computeIntensity(const TouchLightingState& state, float t_ms) {
   //  I(t) = I₀ · e^(−t/τ)
-  return pd.I0_actual * expf(-t_ms / tau);
+  float baseLighting = state.I0_actual * expf(-t_ms / tau);
+  float spring = massSpringResponse(t_ms, state.pressure);
+  float springGain = 1.0f + 0.70f * spring;
+  return baseLighting * springGain;
 }
