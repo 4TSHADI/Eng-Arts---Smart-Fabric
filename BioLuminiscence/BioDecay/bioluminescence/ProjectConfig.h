@@ -4,9 +4,8 @@
 //
 // Hardware:
 //   - 4× MPR121 behind a TCA9548A mux
-//   - 2× 16×16 LED panels chained as a 16×32 canvas
-//   - Each LED panel is driven by one X-axis MPR121 and one Y-axis MPR121
-//   - Every panel therefore gets an independent 8×8 touch grid
+//   - Active touch input uses mux channels 2 (X) and 3 (Y)
+//   - One sensor pair controls both LED panels
 // ============================================================
 #ifndef PROJECT_CONFIG_H
 #define PROJECT_CONFIG_H
@@ -25,8 +24,9 @@
 
 // Touch sensitivity thresholds (lower values are more sensitive)
 // Default: Touch = 12, Release = 6. Previous: Touch = 8, Release = 4.
-#define MPR121_TOUCH_THRESHOLD    5
+#define MPR121_TOUCH_THRESHOLD    4
 #define MPR121_RELEASE_THRESHOLD  2
+#define SENSOR_STARTUP_CALIBRATION_MS 30000
 
 // Runtime feature toggles
 #define ENABLE_WIFI_CONTROL        0
@@ -43,19 +43,20 @@
 #define TOUCH_REGION_SIZE    2
 #define DISABLED_ELECTRODE   255
 
-static constexpr uint8_t X_SENSOR_CHANNELS[NUM_PANELS] = {0, 2};
-static constexpr uint8_t Y_SENSOR_CHANNELS[NUM_PANELS] = {1, 3};
+static constexpr uint8_t X_SENSOR_CHANNELS[NUM_PANELS] = {2, 2};
+static constexpr uint8_t Y_SENSOR_CHANNELS[NUM_PANELS] = {3, 3};
 
 // Per-sensor electrode-to-cell mapping (up to 8 active electrodes per MPR121).
 // Cell index is the position in each row below (0..7).
 // Use DISABLED_ELECTRODE (255) to switch an electrode off completely.
 static constexpr uint8_t SENSOR_ELECTRODE_MAP[NUM_MUX_CHANNELS][ELECTRODES_PER_SENSOR] = {
-  {11, 0, 1, 2, 3, 4, 5, 6},
-  {6, 5, 4, 3, 2, 1, 0, 11},
-  // {6, 5, 4, 3, 2, 1, 0, 11},
-  {11, 0, 1, 2, 3, 4, 5, 6},
-  // {6, 5, 4, 3, 2, 1, 0, 11},
-  {11, 0, 1, 2, 3, 4, 5, 6}
+  // Unused channels (0 and 1)
+  {DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE},
+  {DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE, DISABLED_ELECTRODE},
+  // Active X sensor on mux2: mapped from electrode 4
+  {8,9,10,11,0,1,2,3},
+  // Active Y sensor on mux3
+  {5,4, 3, 2, 1, 0, 11, 10},
 };
 
 // ── WiFi configuration ──────────────────────────────────────

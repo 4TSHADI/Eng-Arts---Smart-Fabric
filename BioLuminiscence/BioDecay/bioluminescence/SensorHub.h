@@ -58,6 +58,8 @@ public:
       _sensorReady[xChannel] = initSensor(_sensors[xChannel], xChannel, xLabel);
       _sensorReady[yChannel] = initSensor(_sensors[yChannel], yChannel, yLabel);
     }
+
+    runStartupCalibration();
   }
 
   void pollTouches(LightingMode* activeMode, Adafruit_NeoPixel& strip) {
@@ -128,6 +130,51 @@ private:
     Wire.beginTransmission(addr);
     uint8_t err = Wire.endTransmission();
     return err == 0;
+  }
+
+  void runStartupCalibration() {
+    if (SENSOR_STARTUP_CALIBRATION_MS == 0) return;
+
+    bool hasReadySensor = false;
+    for (uint8_t ch = 0; ch < NUM_MUX_CHANNELS; ++ch) {
+      if (_sensorReady[ch]) {
+        hasReadySensor = true;
+        break;
+      }
+    }
+    if (!hasReadySensor) return;
+
+    Serial.print("Starting MPR121 calibration window: ");
+    Serial.print(SENSOR_STARTUP_CALIBRATION_MS / 1000);
+    Serial.println("s (avoid touching sensors)");
+
+    const unsigned long startMs = millis();
+    unsigned long nextStatusMs = startMs;
+
+    while ((millis() - startMs) < SENSOR_STARTUP_CALIBRATION_MS) {
+      // Keep sensors active during warm-up so baselines settle before use.
+      for (uint8_t ch = 0; ch < NUM_MUX_CHANNELS; ++ch) {
+        if (!_sensorReady[ch]) continue;
+        if (!tcaSelect(ch)) continue;
+        (void)_sensors[ch].touched();
+      }
+
+      unsigned long nowMs = millis();
+      if (nowMs >= nextStatusMs) {
+        unsigned long elapsed = nowMs - startMs;
+        unsigned long remain = (elapsed >= SENSOR_STARTUP_CALIBRATION_MS)
+          ? 0
+          : (SENSOR_STARTUP_CALIBRATION_MS - elapsed);
+        Serial.print("  calibration remaining: ");
+        Serial.print((remain + 999) / 1000);
+        Serial.println("s");
+        nextStatusMs = nowMs + 5000;
+      }
+
+      delay(20);
+    }
+
+    Serial.println("MPR121 calibration complete.");
   }
 
   void printI2CLineState() {
