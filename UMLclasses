@@ -1,0 +1,150 @@
+```plantuml
+@startuml
+left to right direction
+skinparam classAttributeIconSize 0
+
+class TouchEvent {
+  +panelId: uint8_t
+  +xCell: uint8_t
+  +yCell: uint8_t
+  +isTouched: bool
+  +pressure: int16_t
+}
+
+class LightingMode {
+  +{abstract} enter(strip)
+  +{abstract} onTouch(strip, event)
+  +{abstract} update(strip)
+  +{abstract} getName()
+  +{static} intensityToBrightness(I: float)
+  +{static} massSpringResponse(...)
+}
+
+class TouchLightingState {
+  +active: bool
+  +startTime: unsigned long
+  +I0_actual: float
+  +pressure: int16_t
+}
+
+class SimpleLightingMode {
+  +I0: float
+  +tau: float
+  #_touchStates: TouchLightingState[]
+  +enter(strip)
+  +onTouch(strip, event)
+  +update(strip)
+  +getName()
+}
+
+class MultiExpLightingMode
+class PulsingLightingMode
+
+class TouchHeatState {
+  +heat: float
+  +brightness: float
+  +isTouched: bool
+  +pressure: int16_t
+  +lastTouch: unsigned long
+}
+
+class HeatMapMode {
+  +heatPerTouch: float
+  +holdHeatRate: float
+  +coolRate: float
+  +ambientBri: float
+  +flashTau: float
+  -_touchStates: TouchHeatState[]
+  -_lastUpdate: unsigned long
+  +enter(strip)
+  +onTouch(strip, event)
+  +update(strip)
+  +getName()
+}
+
+class SpreadParticle {
+  +x: float
+  +y: float
+  +dx: float
+  +dy: float
+  +r: uint8_t
+  +g: uint8_t
+  +b: uint8_t
+  +life: uint16_t
+  +maxLife: uint16_t
+  +peakBrightness: float
+  +active: bool
+}
+
+class SpreadLightingMode {
+  -_particles: SpreadParticle[]
+  -_noiseFrame: uint32_t
+  -_active: bool
+  +enter(strip)
+  +onTouch(strip, event)
+  +update(strip)
+  +getName()
+}
+
+class FlashTestMode
+class SolidColorMode
+
+class AxisTouch {
+  +valid: bool
+  +cell: uint8_t
+  +pressure: int16_t
+}
+
+class SensorHub {
+  +begin()
+  +initSensors()
+  +pollTouches(activeMode, strip)
+}
+
+class ModeRegistration {
+  +name: const char*
+  +mode: LightingMode*
+}
+
+class ModeController {
+  +registerMode(name, mode)
+  +begin(strip)
+  +selectMode(index, strip)
+  +handleSerial(strip)
+  +activeMode()
+}
+
+class WiFiController {
+  +begin()
+  +handle(modeController, strip)
+}
+
+class ProjectConfig {
+  +WIDTH: uint8_t
+  +HEIGHT: uint8_t
+  +NUM_LEDS: uint16_t
+  +XY(x, y)
+  +touchPointIndex(panelId, xCell, yCell)
+  +getTouchRegionBounds(panelId, xCell, yCell)
+}
+
+LightingMode <|-- SimpleLightingMode
+LightingMode <|-- HeatMapMode
+LightingMode <|-- SpreadLightingMode
+LightingMode <|-- FlashTestMode
+LightingMode <|-- SolidColorMode
+SimpleLightingMode <|-- MultiExpLightingMode
+SimpleLightingMode <|-- PulsingLightingMode
+
+TouchLightingState --* SimpleLightingMode
+TouchHeatState --* HeatMapMode
+SpreadParticle --* SpreadLightingMode
+
+ModeController o-- "0..10" ModeRegistration
+ModeController --> LightingMode : manages
+SensorHub --> LightingMode : polls active mode
+SensorHub --> TouchEvent : emits
+SensorHub --> AxisTouch
+WiFiController --> ModeController : commands
+ProjectConfig ..> LightingMode : shared constants
+@enduml
